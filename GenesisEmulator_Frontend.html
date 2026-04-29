@@ -1,0 +1,1802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D!NG · Genesis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=League+Spartan:wght@100..900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0a0a0c; --surface:#13131a; --s2:#1c1c28; --s3:#222230;
+    --border:rgba(255,255,255,0.07); --amber:#f5a623; --amber-d:#c47d0e;
+    --teal:#00d4c8; --text:#e8e8f0; --muted:#6b6b80; --dim:#9090a8;
+    --red:#ff4d6d; --green:#4dff91; --blue:#4d8fff;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; }
+
+  /* ── Root layout ── */
+  .gen-root { min-height:100vh; background:var(--bg); display:flex; flex-direction:column; align-items:center; padding:1.5rem; }
+  .gen-header { width:100%; max-width:1040px; display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem; padding-bottom:1rem; border-bottom:1px solid var(--border); }
+  .gen-logo { font-family:'League Spartan',sans-serif; font-size:2rem; letter-spacing:4px; }
+  .gen-logo span { color:var(--blue); }
+  .gen-badge { display:none; align-items:center; gap:0.5rem; padding:0.35rem 0.85rem; border:1px solid rgba(77,143,255,0.25); border-radius:6px; background:rgba(77,143,255,0.06); font-family:'League Spartan',sans-serif; font-size:0.7rem; color:var(--blue); letter-spacing:0.1em; }
+  .gen-badge.visible { display:flex; }
+  .gen-badge-dot { width:6px; height:6px; border-radius:50%; background:var(--blue); box-shadow:0 0 6px var(--blue); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .gen-main { display:grid; grid-template-columns:auto 270px; gap:1.5rem; width:100%; max-width:1040px; align-items:start; }
+
+  /* ── Screen unit ── */
+  .gen-unit { background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+  .gen-screen-wrap { background:#060608; display:flex; align-items:center; justify-content:center; padding:1.5rem; cursor:pointer; }
+  .gen-canvas { image-rendering:pixelated; border-radius:4px; box-shadow:0 0 40px rgba(0,0,0,0.8); display:none; }
+  .gen-canvas.visible { display:block; }
+  .gen-canvas-off { width:640px; height:448px; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:4px; background:#0d0d0d; border:1px dashed rgba(255,255,255,0.08); gap:0.75rem; transition:border-color 0.2s,background 0.2s; }
+  .gen-canvas-off.hidden { display:none; }
+  .gen-canvas-off.drag { border-color:var(--blue); background:rgba(77,143,255,0.06); }
+  .gen-drop-icon { font-size:2.5rem; opacity:0.5; }
+  .gen-drop-text { font-family:'League Spartan',sans-serif; font-size:1.3rem; letter-spacing:2px; color:var(--muted); }
+  .gen-drop-sub { font-size:0.72rem; color:var(--muted); font-family:'League Spartan',sans-serif; }
+  .gen-unit-footer { padding:0.85rem 1.5rem; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .rp-bar { display:none; padding:0.4rem 1.5rem; border-top:1px solid var(--border); background:var(--s2); font-family:'League Spartan',sans-serif; font-size:0.7rem; color:var(--teal); letter-spacing:0.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .gen-rom-name { font-family:'League Spartan',sans-serif; font-size:0.75rem; color:var(--blue); letter-spacing:0.06em; }
+  .gen-fps { font-family:'League Spartan',sans-serif; font-size:0.68rem; color:var(--muted); }
+  .gen-btns { display:none; gap:0.5rem; padding:0.85rem 1.5rem 1rem; border-top:1px solid var(--border); flex-wrap:wrap; }
+  .gen-btns.visible { display:flex; }
+  .gen-btn { padding:0.4rem 0.9rem; border-radius:6px; border:1px solid var(--border); background:var(--s2); color:var(--text); font-family:'DM Sans'; font-size:0.78rem; font-weight:500; cursor:pointer; transition:all 0.15s; }
+  .gen-btn:hover { background:var(--s3); border-color:rgba(77,143,255,0.25); }
+  .gen-btn.danger { border-color:rgba(255,77,109,0.25); color:var(--red); }
+  .gen-btn.danger:hover { background:rgba(255,77,109,0.08); }
+  .gen-spacer { flex:1; }
+
+  /* ── Sidebar ── */
+  .gen-sidebar { display:flex; flex-direction:column; gap:1rem; }
+  .gen-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .gen-card-header { padding:0.85rem 1.1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:0.6rem; cursor:pointer; user-select:none; transition:background 0.15s; }
+  .gen-card-header:hover { background:var(--s2); }
+  .gen-card-title { font-family:'League Spartan',sans-serif; font-size:0.95rem; letter-spacing:2px; }
+  .gen-card-body { padding:1rem 1.1rem; }
+  .gen-card-chevron { margin-left:auto; font-size:0.6rem; color:var(--muted); transition:transform 0.2s; flex-shrink:0; }
+  .gen-card.collapsed .gen-card-chevron { transform:rotate(-90deg); }
+  .gen-card.collapsed .gen-card-body,
+  .gen-card.collapsed .ach-panel-tabs,
+  .gen-card.collapsed .ach-config-body,
+  .gen-card.collapsed .ach-live-body,
+  .gen-card.collapsed #ach-pane-live,
+  .gen-card.collapsed #ach-pane-config { display:none !important; }
+
+  /* ── Region card ── */
+  .region-grid { display:grid; grid-template-columns:1fr 1fr; gap:0.4rem; margin-bottom:0.65rem; }
+  .region-btn { padding:0.5rem 0.65rem; border-radius:6px; border:1px solid var(--border); background:var(--s2); cursor:pointer; transition:all 0.15s; text-align:center; font-family:'League Spartan',sans-serif; font-size:0.85rem; letter-spacing:1px; color:var(--muted); }
+  .region-btn:hover { border-color:rgba(77,143,255,0.25); color:var(--text); }
+  .region-btn.on { border-color:rgba(77,143,255,0.35); background:rgba(77,143,255,0.08); color:var(--blue); }
+  .rom-meta-rows { display:flex; flex-direction:column; gap:0.35rem; }
+  .rom-meta-row { display:flex; justify-content:space-between; font-size:0.72rem; }
+  .rom-meta-label { color:var(--muted); }
+  .rom-meta-val { font-family:'League Spartan',sans-serif; font-size:0.68rem; color:var(--amber); text-align:right; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ── Controls card (merged KB + GP) ── */
+  .ctrl-tabs { display:flex; background:var(--s2); border-bottom:1px solid var(--border); }
+  .ctrl-tab { flex:1; padding:0.42rem; font-family:'League Spartan',sans-serif; font-size:0.62rem; letter-spacing:0.06em; color:var(--muted); cursor:pointer; text-align:center; border-bottom:2px solid transparent; transition:all 0.15s; }
+  .ctrl-tab:hover:not(.disabled) { color:var(--text); }
+  .ctrl-tab.on { color:var(--amber); border-bottom-color:var(--amber); }
+  .ctrl-tab.disabled { opacity:0.35; cursor:not-allowed; }
+  .remap-section { padding:0.5rem 0.75rem; }
+  .remap-row { display:flex; align-items:center; gap:0.4rem; padding:0.32rem 0; border-bottom:1px solid var(--border); }
+  .remap-row:last-child { border-bottom:none; }
+  .remap-label { font-size:0.72rem; color:var(--dim); width:74px; flex-shrink:0; }
+  .remap-chips { display:flex; flex-wrap:wrap; gap:0.25rem; flex:1; align-items:center; min-width:0; }
+  .bind-chip { display:inline-flex; align-items:center; gap:2px; padding:0.12rem 0.35rem; border-radius:3px; background:var(--s3); border:1px solid var(--border); font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--text); }
+  .bind-chip-del { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:0.75rem; padding:0 0 0 2px; line-height:1; }
+  .bind-chip-del:hover { color:var(--red); }
+  .remap-add-btn { padding:0.12rem 0.4rem; border-radius:3px; background:transparent; border:1px solid var(--border); color:var(--muted); font-family:'League Spartan',sans-serif; font-size:0.58rem; cursor:pointer; transition:all 0.15s; white-space:nowrap; flex-shrink:0; }
+  .remap-add-btn:hover { border-color:var(--amber); color:var(--amber); }
+  .remap-add-btn.listening { border-color:var(--amber); color:var(--amber); background:rgba(245,166,35,0.1); animation:pulse 0.8s infinite; }
+  .remap-reset-btn { padding:0.12rem 0.35rem; border-radius:3px; background:transparent; border:1px solid var(--border); color:var(--muted); font-family:'League Spartan',sans-serif; font-size:0.6rem; cursor:pointer; transition:all 0.15s; flex-shrink:0; }
+  .remap-reset-btn:hover { border-color:var(--teal); color:var(--teal); }
+  .remap-divider { padding:0.28rem 0 0.12rem; font-family:'League Spartan',sans-serif; font-size:0.56rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); border-top:1px solid var(--border); margin-top:0.15rem; }
+  .hotkey-section { padding:0.5rem 0.75rem 0.65rem; border-top:1px solid var(--border); background:var(--s2); }
+  .hotkey-section-label { font-family:'League Spartan',sans-serif; font-size:0.58rem; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:0.35rem; }
+  .hotkey-row { display:flex; justify-content:space-between; align-items:center; padding:0.18rem 0; font-size:0.7rem; }
+  .hotkey-action { color:var(--dim); }
+  .hotkey-chips { display:flex; gap:0.25rem; }
+  .hotkey-chip { padding:0.1rem 0.35rem; border-radius:3px; background:var(--s3); border:1px solid var(--border); font-family:'League Spartan',sans-serif; font-size:0.58rem; color:var(--text); }
+  .ctrl-gp-status { display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border); font-family:'League Spartan',sans-serif; font-size:0.65rem; color:var(--green); }
+  .ctrl-gp-dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 5px var(--green); flex-shrink:0; animation:pulse 2s infinite; }
+  .ctrl-footer { display:flex; gap:0.4rem; padding:0.5rem 0.75rem; border-top:1px solid var(--border); }
+
+  /* ── Save card ── */
+  .save-status-row { display:flex; align-items:center; gap:0.5rem; padding:0.55rem 0.75rem; border-radius:6px; background:var(--s2); border:1px solid var(--border); margin-bottom:0.6rem; font-family:'League Spartan',sans-serif; font-size:0.68rem; }
+  .save-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:var(--muted); transition:all 0.3s; }
+  .save-dot.active { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .save-dot.dirty  { background:var(--amber); box-shadow:0 0 6px var(--amber); animation:pulse 1s infinite; }
+  .save-status-text { flex:1; color:var(--muted); }
+  .save-dest-row { font-family:'League Spartan',sans-serif; font-size:0.62rem; color:var(--muted); margin-bottom:0.6rem; display:flex; align-items:center; gap:0.4rem; }
+  .save-dest-val { color:var(--teal); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .save-btns { display:flex; gap:0.5rem; }
+  .save-btns button { flex:1; padding:0.38rem 0; border-radius:5px; font-family:'League Spartan',sans-serif; font-size:0.65rem; cursor:pointer; transition:all 0.15s; }
+  .save-btn-export { background:transparent; border:1px solid var(--border); color:var(--dim); }
+  .save-btn-export:hover:not(:disabled) { border-color:var(--teal); color:var(--teal); }
+  .save-btn-import { background:transparent; border:1px solid var(--border); color:var(--dim); }
+  .save-btn-import:hover:not(:disabled) { border-color:var(--amber); color:var(--amber); }
+  .save-btn-export:disabled, .save-btn-import:disabled { opacity:0.3; cursor:not-allowed; }
+
+  /* ── D!NG engine panel ── */
+  .ach-panel-tabs { display:flex; border-bottom:1px solid var(--border); background:var(--s2); }
+  .ach-panel-tab { padding:0.45rem 0.85rem; font-family:'League Spartan',sans-serif; font-size:0.64rem; letter-spacing:0.08em; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all 0.15s; user-select:none; }
+  .ach-panel-tab:hover { color:var(--text); }
+  .ach-panel-tab.on { color:var(--amber); border-bottom-color:var(--amber); }
+  .ach-config-body { padding:0.85rem; display:flex; flex-direction:column; gap:0.6rem; }
+  .ach-field-label { font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:0.2rem; }
+  .ach-textarea { width:100%; background:var(--s2); border:1px solid var(--border); border-radius:6px; color:var(--teal); font-family:'League Spartan',sans-serif; font-size:0.62rem; padding:0.5rem; resize:vertical; min-height:80px; outline:none; transition:border-color 0.15s; line-height:1.5; }
+  .ach-textarea:focus { border-color:rgba(245,166,35,0.4); }
+  .ach-textarea.error { border-color:rgba(255,77,109,0.5); }
+  .ach-parse-btn { width:100%; padding:0.45rem; border-radius:6px; background:rgba(245,166,35,0.1); border:1px solid rgba(245,166,35,0.3); color:var(--amber); font-family:'League Spartan',sans-serif; font-size:0.7rem; cursor:pointer; transition:all 0.15s; letter-spacing:0.06em; }
+  .ach-parse-btn:hover { background:rgba(245,166,35,0.18); }
+  .ach-parse-status { font-family:'League Spartan',sans-serif; font-size:0.62rem; padding:0.35rem 0.5rem; border-radius:5px; }
+  .ach-parse-status.ok  { background:rgba(77,255,145,0.08); color:var(--green); border:1px solid rgba(77,255,145,0.2); }
+  .ach-parse-status.err { background:rgba(255,77,109,0.08); color:var(--red);   border:1px solid rgba(255,77,109,0.2); }
+  .ach-gameid-input { width:100%; background:var(--s2); border:1px solid var(--border); border-radius:5px; color:var(--amber); font-family:'League Spartan',sans-serif; font-size:0.7rem; padding:0.35rem 0.5rem; outline:none; transition:border-color 0.15s; }
+  .ach-gameid-input:focus { border-color:rgba(245,166,35,0.4); }
+  .ach-live-body { padding:0.5rem; display:flex; flex-direction:column; gap:0.3rem; max-height:280px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--s3) transparent; }
+  .ach-live-row { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0.6rem; border-radius:6px; background:var(--s2); border:1px solid var(--border); transition:all 0.15s; }
+  .ach-live-row.pass { border-color:rgba(245,166,35,0.3); background:rgba(245,166,35,0.06); }
+  .ach-live-row.done { border-color:rgba(77,255,145,0.25); background:rgba(77,255,145,0.05); opacity:0.6; }
+  .ach-live-indicator { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:var(--muted); transition:all 0.15s; }
+  .ach-live-row.pass .ach-live-indicator { background:var(--amber); box-shadow:0 0 6px var(--amber); animation:pulse 1s infinite; }
+  .ach-live-row.done .ach-live-indicator { background:var(--green); }
+  .ach-live-icon { font-size:1rem; flex-shrink:0; }
+  .ach-live-name { flex:1; font-size:0.72rem; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ach-live-pts { font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--amber); flex-shrink:0; }
+  .ach-live-tag { font-family:'League Spartan',sans-serif; font-size:0.58rem; padding:1px 5px; border-radius:3px; flex-shrink:0; }
+  .tag-watching { background:rgba(0,212,200,0.1); color:var(--teal); border:1px solid rgba(0,212,200,0.2); }
+  .tag-unlocked { background:rgba(77,255,145,0.1); color:var(--green); border:1px solid rgba(77,255,145,0.2); }
+  .ach-live-empty { padding:1.25rem; text-align:center; font-family:'League Spartan',sans-serif; font-size:0.65rem; color:var(--muted); line-height:1.7; }
+
+  /* ── Debug panel ── */
+  .dbg-wrap { width:100%; max-width:1040px; margin-top:1.25rem; }
+  .dbg-toggle { width:100%; display:flex; align-items:center; gap:0.75rem; padding:0.6rem 1rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; cursor:pointer; font-family:'League Spartan',sans-serif; font-size:0.9rem; letter-spacing:2px; color:var(--muted); transition:all 0.15s; }
+  .dbg-toggle:hover { border-color:rgba(77,143,255,0.25); color:var(--text); }
+  .dbg-toggle.open { border-radius:10px 10px 0 0; border-bottom-color:transparent; color:var(--blue); }
+  .dbg-toggle-chevron { margin-left:auto; font-size:0.7rem; transition:transform 0.2s; }
+  .dbg-toggle.open .dbg-toggle-chevron { transform:rotate(180deg); }
+  .dbg-dot { width:7px; height:7px; border-radius:50%; background:var(--red); flex-shrink:0; }
+  .dbg-dot.live { background:var(--green); box-shadow:0 0 6px var(--green); animation:pulse 2s infinite; }
+  .dbg-hint { font-family:'League Spartan',sans-serif; font-size:0.65rem; color:var(--dim); font-weight:400; letter-spacing:0.04em; margin-left:0.5rem; }
+  .dbg-panel { background:var(--surface); border:1px solid var(--border); border-top:none; border-radius:0 0 10px 10px; overflow:hidden; display:none; }
+  .dbg-panel.open { display:block; }
+  .dbg-tabs { display:flex; border-bottom:1px solid var(--border); background:var(--s2); }
+  .dbg-tab { padding:0.5rem 1.1rem; font-family:'League Spartan',sans-serif; font-size:0.68rem; letter-spacing:0.08em; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all 0.15s; user-select:none; }
+  .dbg-tab:hover { color:var(--text); }
+  .dbg-tab.on { color:var(--amber); border-bottom-color:var(--amber); }
+  .dbg-body { padding:1rem 1.25rem; }
+  .dbg-empty { color:var(--muted); font-family:'League Spartan',sans-serif; font-size:0.72rem; padding:1rem 0; }
+
+  /* ── Debug reg/io grids ── */
+  .dbg-reg-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.5rem; margin-bottom:1rem; }
+  .dbg-reg-grid-wide { display:grid; grid-template-columns:repeat(8,1fr); gap:0.4rem; margin-bottom:0.75rem; }
+  .dbg-reg { background:var(--s2); border:1px solid var(--border); border-radius:6px; padding:0.5rem 0.65rem; }
+  .dbg-reg-name { font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--muted); margin-bottom:0.2rem; letter-spacing:0.1em; }
+  .dbg-reg-val { font-family:'League Spartan',sans-serif; font-size:0.78rem; color:var(--amber); font-weight:600; }
+  .dbg-reg-sub { font-family:'League Spartan',sans-serif; font-size:0.56rem; color:var(--dim); margin-top:0.15rem; }
+  .dbg-flags { display:flex; gap:0.4rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .dbg-flag { padding:0.2rem 0.6rem; border-radius:4px; font-family:'League Spartan',sans-serif; font-size:0.7rem; font-weight:600; border:1px solid var(--border); background:var(--s2); color:var(--muted); }
+  .dbg-flag.set { background:rgba(77,143,255,0.12); border-color:rgba(77,143,255,0.35); color:var(--blue); }
+  .dbg-flag.warn { background:rgba(255,77,109,0.12); border-color:rgba(255,77,109,0.3); color:var(--red); }
+  .dbg-flag.amber { background:rgba(245,166,35,0.12); border-color:rgba(245,166,35,0.35); color:var(--amber); }
+  .dbg-section-label { margin-bottom:0.5rem; font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--muted); letter-spacing:0.1em; }
+  .dbg-io-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.4rem; margin-bottom:1rem; }
+  .dbg-io-row { display:flex; justify-content:space-between; align-items:center; background:var(--s2); border:1px solid var(--border); border-radius:5px; padding:0.35rem 0.6rem; }
+  .dbg-io-addr { font-family:'League Spartan',sans-serif; font-size:0.6rem; color:var(--muted); }
+  .dbg-io-name { font-family:'League Spartan',sans-serif; font-size:0.62rem; color:var(--dim); }
+  .dbg-io-val { font-family:'League Spartan',sans-serif; font-size:0.72rem; color:var(--teal); font-weight:600; }
+  .dbg-log { display:flex; flex-direction:column; gap:0.3rem; max-height:280px; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--s3) transparent; }
+  .dbg-log-empty { color:var(--muted); font-family:'League Spartan',sans-serif; font-size:0.72rem; }
+  .dbg-log-entry { display:flex; align-items:baseline; gap:0.6rem; font-family:'League Spartan',sans-serif; font-size:0.68rem; }
+  .dbg-log-time { color:var(--muted); font-size:0.6rem; flex-shrink:0; }
+  .dbg-log-tag { padding:0.1rem 0.4rem; border-radius:3px; font-size:0.58rem; font-weight:700; letter-spacing:0.06em; flex-shrink:0; }
+  .dbg-log-tag.m68k { background:rgba(77,143,255,0.1); color:var(--blue); }
+  .dbg-log-tag.vdp  { background:rgba(77,255,145,0.1); color:var(--green); }
+  .dbg-log-tag.z80  { background:rgba(245,166,35,0.1); color:var(--amber); }
+  .dbg-log-tag.irq  { background:rgba(255,77,109,0.1); color:var(--red); }
+  .dbg-log-tag.apu  { background:rgba(155,89,182,0.1); color:#d7a8ff; }
+  .dbg-log-tag.mbc  { background:rgba(0,212,200,0.1); color:var(--teal); }
+  .dbg-log-msg { color:var(--dim); flex:1; }
+
+  /* ── APU debug ── */
+  .apu-channels { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; }
+  .apu-ch { background:var(--s2); border:1px solid var(--border); border-radius:8px; padding:0.65rem; }
+  .apu-ch.active { border-color:rgba(0,212,200,0.2); }
+  .apu-ch-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:0.4rem; }
+  .apu-ch-name { font-family:'League Spartan',sans-serif; font-size:0.7rem; font-weight:600; color:var(--muted); }
+  .apu-ch-name.active { color:var(--teal); }
+  .apu-ch-badge { font-family:'League Spartan',sans-serif; font-size:0.58rem; padding:1px 6px; border-radius:3px; }
+  .apu-ch-badge.on  { background:rgba(0,212,200,0.12); color:var(--teal); border:1px solid rgba(0,212,200,0.25); }
+  .apu-ch-badge.off { background:var(--s3); color:var(--muted); border:1px solid var(--border); }
+  .apu-ch-rows { display:flex; flex-direction:column; gap:0.28rem; }
+  .apu-ch-row { display:flex; justify-content:space-between; font-size:0.7rem; }
+  .apu-ch-key { color:var(--muted); }
+  .apu-ch-val { font-family:'League Spartan',sans-serif; font-size:0.68rem; color:var(--dim); }
+  .apu-level-wrap { margin-top:0.5rem; }
+  .apu-level-track { height:4px; background:var(--s3); border-radius:2px; overflow:hidden; }
+  .apu-level-fill { height:100%; border-radius:2px; transition:width 0.1s; }
+
+  /* ── Toast ── */
+  .toast-wrap { position:fixed; bottom:1.5rem; right:1.5rem; display:flex; flex-direction:column; gap:0.5rem; z-index:9999; pointer-events:none; }
+  .toast { display:flex; align-items:center; gap:0.85rem; padding:0.85rem 1.1rem; background:var(--surface); border:1px solid rgba(77,143,255,0.4); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.6); min-width:280px; max-width:340px; animation:toastIn 0.3s cubic-bezier(0.34,1.56,0.64,1); pointer-events:auto; }
+  .toast.out { animation:toastOut 0.3s ease forwards; }
+  @keyframes toastIn  { from{opacity:0;transform:translateX(60px) scale(0.92)} to{opacity:1;transform:translateX(0) scale(1)} }
+  @keyframes toastOut { from{opacity:1;transform:translateX(0)} to{opacity:0;transform:translateX(60px)} }
+  .toast-icon { font-size:1.8rem; flex-shrink:0; }
+  .toast-body { flex:1; min-width:0; }
+  .toast-label { font-family:'League Spartan',sans-serif; font-size:0.58rem; letter-spacing:0.14em; text-transform:uppercase; color:var(--blue); margin-bottom:0.2rem; }
+  .toast-name { font-size:0.88rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .toast-desc { font-size:0.7rem; color:var(--dim); margin-top:0.15rem; line-height:1.35; }
+  .toast-pts { font-family:'League Spartan',sans-serif; font-size:0.72rem; color:var(--amber); font-weight:600; flex-shrink:0; }
+ 
+</style>
+
+</head>
+<body>
+
+<div class="gen-root">
+
+  <header class="gen-header">
+    <div class="gen-logo">D!NG <span>·</span> GENESIS</div>
+    <div class="gen-badge" id="running-badge">
+      <div class="gen-badge-dot"></div>
+      <span id="running-game-name">GENESIS ACTIVE</span>
+    </div>
+  </header>
+
+  <div class="gen-main">
+
+    <!-- ── Screen unit ── -->
+    <div class="gen-unit">
+      <div class="gen-screen-wrap" id="screen-wrap">
+        <!-- Width/height set to GEN_W*GEN_SCALE x GEN_H*GEN_SCALE = 640x448 (NTSC) -->
+        <canvas id="gen-canvas" class="gen-canvas" width="640" height="448"></canvas>
+        <div class="gen-canvas-off" id="canvas-off">
+          <div class="gen-drop-icon">🎮</div>
+          <div class="gen-drop-text">Drop a ROM here</div>
+          <div class="gen-drop-sub">.bin / .md / .gen / .smd</div>
+          <div class="gen-drop-sub">Ding does not provide copyrighted ROMs or BIOSes</div>
+        </div>
+      </div>
+      <div class="rp-bar" id="rp-bar"></div>
+      <div class="gen-unit-footer">
+        <div class="gen-rom-name" id="rom-name">NO ROM LOADED</div>
+        <div class="gen-fps" id="fps-display"></div>
+      </div>
+      <div class="gen-btns" id="gen-btns">
+        <button class="gen-btn" id="btn-pause">⏸ Pause</button>
+        <button class="gen-btn" id="btn-reset">↺ Reset</button>
+        <button class="gen-btn" id="btn-mute">🔊 Mute</button>
+        <div style="display:flex;align-items:center;gap:0.4rem;font-family:'League Spartan',sans-serif;font-size:0.68rem;color:var(--muted)">
+          ⏩
+          <select id="ff-speed" style="background:var(--s2);border:1px solid var(--border);border-radius:5px;color:var(--dim);font-family:'League Spartan',sans-serif;font-size:0.68rem;padding:0.25rem 0.4rem;cursor:pointer;outline:none;">
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </select>
+        </div>
+        <button class="gen-btn" id="btn-savestate">💾 Save State</button>
+        <div class="gen-spacer"></div>
+        <button class="gen-btn danger" id="btn-eject">⏏ Eject</button>
+      </div>
+      <input id="rom-input" type="file" accept=".bin,.md,.gen,.smd" style="display:none">
+    </div>
+
+    <!-- ── Sidebar ── -->
+    <div class="gen-sidebar">
+
+      <!-- Region + ROM metadata -->
+      <div class="gen-card" id="card-region">
+        <div class="gen-card-header" onclick="toggleCard('card-region')">
+          <span>🌍</span><div class="gen-card-title">REGION</div>
+          <div class="gen-card-chevron">▼</div>
+        </div>
+        <div class="gen-card-body">
+          <div class="region-grid" style="margin-bottom:0.65rem">
+            <button class="region-btn on" id="region-ntsc" onclick="setRegion('NTSC')">NTSC<br><span style="font-size:0.6rem;letter-spacing:0">60 Hz · 224p</span></button>
+            <button class="region-btn" id="region-pal"  onclick="setRegion('PAL')">PAL<br><span style="font-size:0.6rem;letter-spacing:0">50 Hz · 240p</span></button>
+          </div>
+          <div class="rom-meta-rows" id="rom-meta-rows">
+            <div class="rom-meta-row"><span class="rom-meta-label">Title</span><span class="rom-meta-val" id="meta-title">—</span></div>
+            <div class="rom-meta-row"><span class="rom-meta-label">Developer</span><span class="rom-meta-val" id="meta-dev">—</span></div>
+            <div class="rom-meta-row"><span class="rom-meta-label">Serial</span><span class="rom-meta-val" id="meta-serial">—</span></div>
+            <div class="rom-meta-row"><span class="rom-meta-label">Regions</span><span class="rom-meta-val" id="meta-regions">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls (keyboard + controller) -->
+      <div class="gen-card" id="card-controls">
+        <div class="gen-card-header" onclick="toggleCard('card-controls')">
+          <span id="ctrl-card-icon">⌨️</span><div class="gen-card-title">CONTROLS</div>
+          <div class="gen-card-chevron">▼</div>
+        </div>
+        <div class="gen-card-body" id="controls-card-body" style="padding:0"></div>
+      </div>
+
+      <!-- Save -->
+      <div class="gen-card" id="card-save">
+        <div class="gen-card-header" onclick="toggleCard('card-save')">
+          <span>💾</span><div class="gen-card-title">SAVE</div>
+          <div class="gen-card-chevron">▼</div>
+        </div>
+        <div class="gen-card-body">
+          <div class="save-status-row">
+            <div class="save-dot" id="save-dot"></div>
+            <div class="save-status-text" id="save-status-text">No ROM loaded</div>
+          </div>
+          <div class="save-dest-row">
+            <span>Destination:</span>
+            <span class="save-dest-val" id="save-dest-val">—</span>
+          </div>
+          <div class="save-btns">
+            <button class="save-btn-export" id="btn-export-sram" disabled onclick="sramExport()">⬇ Export .sav</button>
+            <button class="save-btn-import" id="btn-import-sram" disabled onclick="sramImport()">⬆ Import .sav</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- D!NG Engine -->
+      <div class="gen-card" id="card-ding">
+        <div class="gen-card-header" onclick="toggleCard('card-ding')">
+          <span>🏆</span><div class="gen-card-title">D!NG ENGINE</div>
+          <div class="gen-card-chevron">▼</div>
+        </div>
+        <div class="ach-panel-tabs">
+          <div class="ach-panel-tab on" id="ach-tab-config" data-tab="config">CONFIG</div>
+          <div class="ach-panel-tab" id="ach-tab-live" data-tab="live">LIVE</div>
+        </div>
+        <div id="ach-pane-config" class="ach-config-body">
+          <div id="set-status-box" style="padding:0.6rem 0.75rem;border-radius:6px;background:var(--s2);border:1px solid var(--border)">
+            <div id="set-status-label" style="font-family:'League Spartan',sans-serif;font-size:0.58rem;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.3rem;color:var(--muted)">○ No ROM Loaded</div>
+            <div id="set-status-msg" style="font-family:'League Spartan',sans-serif;font-size:0.6rem;color:var(--dim);line-height:1.6">Load a ROM to auto-fetch its achievement set.</div>
+            <div id="set-status-hint" style="display:none;font-family:'League Spartan',sans-serif;font-size:0.58rem;color:var(--muted);margin-top:0.4rem;line-height:1.6"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:0.5rem;font-family:'League Spartan',sans-serif;font-size:0.56rem;color:var(--muted)">
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+            manual override
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+          </div>
+          <div>
+            <div class="ach-field-label">Game ID</div>
+            <input id="ach-gameid" class="ach-gameid-input" type="number" placeholder="e.g. 12">
+          </div>
+          <div>
+            <div class="ach-field-label">Achievement Logic JSON</div>
+            <textarea id="ach-logic-input" class="ach-textarea" rows="5" placeholder='{ "achievements": [...], "leaderboards": [] }'></textarea>
+          </div>
+          <button class="ach-parse-btn" id="ach-load-btn">⚡ Load Manually</button>
+          <div id="ach-parse-status" style="display:none"></div>
+          <div style="font-family:'League Spartan',sans-serif;font-size:0.58rem;color:var(--muted);line-height:1.6">
+            Addr format: <span style="color:var(--teal)">0xFF0000+</span> (Genesis WRAM)<br>
+            Use Cockpit → Export → 🎮 Copy for Emulator
+          </div>
+        </div>
+        <div id="ach-pane-live" style="display:none">
+          <div id="ach-live-list" class="ach-live-body">
+            <div class="ach-live-empty">No set loaded.<br>Configure in the Config tab.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leaderboards -->
+      <div class="gen-card" id="card-lb">
+        <div class="gen-card-header" onclick="toggleCard('card-lb')">
+          <span>🏅</span><div class="gen-card-title">LEADERBOARDS</div>
+          <div class="gen-card-chevron">▼</div>
+        </div>
+        <div class="gen-card-body" id="lb-card-body" style="padding:0.75rem 1.1rem">
+          <div style="font-family:'League Spartan',sans-serif;font-size:0.65rem;color:var(--muted);text-align:center;padding:0.25rem 0">No leaderboards loaded.</div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+  </div><!-- /gen-main -->
+
+  <!-- Debug panel -->
+  <div class="dbg-wrap">
+    <button class="dbg-toggle" id="dbg-toggle">
+      <div class="dbg-dot" id="dbg-dot"></div>
+      DIAGNOSTICS
+      <span class="dbg-hint" id="dbg-hint"></span>
+      <span class="dbg-toggle-chevron">▼</span>
+    </button>
+    <div class="dbg-panel" id="dbg-panel">
+      <div class="dbg-tabs" id="dbg-tabs"></div>
+      <div class="dbg-body" id="dbg-body"></div>
+    </div>
+  </div>
+
+</div><!-- /gen-root -->
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- D!NG offline game database -->
+<script src="ding-sets.js" onerror="void 0"></script>
+<!-- D!NG achievement/leaderboard engine -->
+<script src="ding-engine.js"></script>
+<!-- Genesis emulator core — M68K, Z80, VDP, APU, Bus -->
+<script src="genesis-core.js"></script>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS & STATE
+// Expects from genesis-core.js: GEN_W, GEN_H, GEN_SCALE,
+//   md5(buf), romHeaderTitle(buf), dingBuildState(gen), Genesis class
+// ═══════════════════════════════════════════════════════════════
+let gen          = null;
+let running      = false;
+let paused       = false;
+let muted        = false;
+let fastForward  = false;
+let FF_MULTIPLIER = parseInt(localStorage.getItem('ding-gen-ff-speed') || '4', 10);
+let currentRegion = 'NTSC';
+let rafId        = null;
+let offscreen    = null;
+let fpsCount     = 0, fpsLast = 0, currentFps = 0;
+let dbgOpen      = false;
+let dbgTab       = 'm68k';
+let dbgSnap      = null;
+let prevSnapState = {};
+let eventLog     = [];
+let eventIdCounter = 0;
+let romMd5       = null;
+let ctrlTab      = 'kb';
+
+
+
+// ─ Keyboard actions ───────────────────────────────────────────
+const KB_ACTIONS = [
+  { label:'A',      btn: GEN_BTN.A     },
+  { label:'B',      btn: GEN_BTN.B     },
+  { label:'C',      btn: GEN_BTN.C     },
+  { label:'Start',  btn: GEN_BTN.START },
+  { label:'D-pad ↑', btn: GEN_BTN.UP   },
+  { label:'D-pad ↓', btn: GEN_BTN.DOWN },
+  { label:'D-pad ←', btn: GEN_BTN.LEFT },
+  { label:'D-pad →', btn: GEN_BTN.RIGHT },
+  { label:'X (6btn)',  btn: GEN_BTN.X   },
+  { label:'Y (6btn)',  btn: GEN_BTN.Y   },
+  { label:'Z (6btn)',  btn: GEN_BTN.Z   },
+  { label:'Mode (6btn)', btn: GEN_BTN.MODE },
+];
+
+const KB_DEFAULT_MAP = [
+  ['z','Z'],        // A
+  ['x','X'],        // B
+  ['c','C'],        // C
+  ['Enter'],        // Start
+  ['ArrowUp'],
+  ['ArrowDown'],
+  ['ArrowLeft'],
+  ['ArrowRight'],
+  ['a','A'],        // X
+  ['s','S'],        // Y
+  ['d','D'],        // Z
+  ['Shift'],        // Mode
+];
+
+let kbMap = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ding-gen-kb-map'));
+    if (Array.isArray(saved) && saved.length === KB_DEFAULT_MAP.length) return saved;
+  } catch(e) {}
+  return KB_DEFAULT_MAP.map(keys => [...keys]);
+})();
+
+let KEY_MAP = {};
+
+function buildKeyMap() {
+  KEY_MAP = {};
+  KB_ACTIONS.forEach((action, i) => {
+    (kbMap[i] || []).forEach(key => { KEY_MAP[key] = action.btn; });
+  });
+}
+buildKeyMap();
+
+function kbSaveMap() {
+  try { localStorage.setItem('ding-gen-kb-map', JSON.stringify(kbMap)); } catch(e) {}
+}
+
+function fmtKey(key) {
+  const names = {
+    'ArrowUp':'↑','ArrowDown':'↓','ArrowLeft':'←','ArrowRight':'→',
+    'Enter':'Enter','Shift':'Shift',' ':'Space','Escape':'Esc',
+    'Control':'Ctrl','Alt':'Alt','Meta':'Meta','Tab':'Tab',
+    'Backspace':'Bksp','Delete':'Del',
+  };
+  return names[key] ?? key;
+}
+
+let kbRemapStep  = -1;
+let kbListening  = false;
+
+// ─ Gamepad ───────────────────────────────────────────────────
+const GP_BTN_NAMES = ['A','B','X','Y','LB','RB','LT','RT','Select','Start','L3','R3','↑','↓','←','→'];
+
+const GP_ACTIONS = [
+  { label:'A',      btn: GEN_BTN.A     },
+  { label:'B',      btn: GEN_BTN.B     },
+  { label:'C',      btn: GEN_BTN.C     },
+  { label:'Start',  btn: GEN_BTN.START },
+  { label:'D-pad ↑', btn: GEN_BTN.UP   },
+  { label:'D-pad ↓', btn: GEN_BTN.DOWN },
+  { label:'D-pad ←', btn: GEN_BTN.LEFT },
+  { label:'D-pad →', btn: GEN_BTN.RIGHT },
+  { label:'X (6btn)',   btn: GEN_BTN.X  },
+  { label:'Y (6btn)',   btn: GEN_BTN.Y  },
+  { label:'Z (6btn)',   btn: GEN_BTN.Z  },
+  { label:'Mode (6btn)',btn: GEN_BTN.MODE },
+];
+
+const GP_DEFAULT_MAP = [
+  [0],  // A  → A/Cross
+  [1],  // B  → B/Circle
+  [2],  // C  → X/Square
+  [9],  // Start
+  [12], // ↑
+  [13], // ↓
+  [14], // ←
+  [15], // →
+  [3],  // X → Y/Triangle
+  [4],  // Y → LB
+  [5],  // Z → RB
+  [8],  // Mode → Select
+];
+
+let gpMap = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ding-gen-gp-map'));
+    if (Array.isArray(saved) && saved.length === GP_DEFAULT_MAP.length
+        && saved.every(Array.isArray)) return saved;
+  } catch(e) {}
+  return GP_DEFAULT_MAP.map(b => [...b]);
+})();
+
+function gpSaveMap() {
+  try { localStorage.setItem('ding-gen-gp-map', JSON.stringify(gpMap)); } catch(e) {}
+}
+
+let gpIndex       = null;
+let gpPrevButtons = [];
+let gpPrevAxes    = [0, 0];
+let gpRemapping   = false;
+let gpRemapStep   = -1;
+const AXIS_DEAD   = 0.5;
+
+function gpBtnLabel(idx) { return GP_BTN_NAMES[idx] ?? `Btn ${idx}`; }
+
+function gpPoll() {
+  if (gpIndex === null) return;
+  const gp = navigator.getGamepads()[gpIndex];
+  if (!gp) return;
+  const btns = gp.buttons.map(b => b.value > 0.5);
+
+  if (gpRemapping && gpRemapStep >= 0) {
+    for (let i = 0; i < btns.length; i++) {
+      if (btns[i] && !(gpPrevButtons[i] ?? false)) {
+        if (!gpMap[gpRemapStep].includes(i)) { gpMap[gpRemapStep].push(i); gpSaveMap(); }
+        gpRemapping = false; gpRemapStep = -1;
+        renderControlsCard();
+        break;
+      }
+    }
+    gpPrevButtons = btns; return;
+  }
+
+  if (gen) {
+    GP_ACTIONS.forEach((action, i) => {
+      const cur  = (gpMap[i] || []).some(bi => btns[bi]           ?? false);
+      const prev = (gpMap[i] || []).some(bi => gpPrevButtons[bi] ?? false);
+      if (cur !== prev) gen.pressButton(0, action.btn, cur);
+    });
+    const ax = gp.axes[0] ?? 0, ay = gp.axes[1] ?? 0;
+    const sr = ax >  AXIS_DEAD, pl = gpPrevAxes[0] >  AXIS_DEAD;
+    const sl = ax < -AXIS_DEAD, pr = gpPrevAxes[0] < -AXIS_DEAD;
+    const sd = ay >  AXIS_DEAD, pu = gpPrevAxes[1] >  AXIS_DEAD;
+    const su = ay < -AXIS_DEAD, pd = gpPrevAxes[1] < -AXIS_DEAD;
+    if (sr !== pl) gen.pressButton(0, GEN_BTN.RIGHT, sr);
+    if (sl !== pr) gen.pressButton(0, GEN_BTN.LEFT,  sl);
+    if (su !== pd) gen.pressButton(0, GEN_BTN.UP,    su);
+    if (sd !== pu) gen.pressButton(0, GEN_BTN.DOWN,  sd);
+    gpPrevAxes = [ax, ay];
+  }
+  gpPrevButtons = btns;
+}
+
+window.addEventListener('gamepadconnected', e => {
+  gpIndex = e.gamepad.index; gpPrevButtons = []; gpPrevAxes = [0, 0];
+  ctrlTab = 'gp';
+  pushEvent('m68k', `Controller connected: ${e.gamepad.id}`);
+  renderControlsCard();
+});
+window.addEventListener('gamepaddisconnected', e => {
+  if (e.gamepad.index !== gpIndex) return;
+  gpIndex = null; gpPrevButtons = []; gpPrevAxes = [0, 0];
+  if (gpRemapping) { gpRemapping = false; gpRemapStep = -1; }
+  ctrlTab = 'kb';
+  pushEvent('m68k', 'Controller disconnected');
+  renderControlsCard();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BROADCASTCHANNEL
+// ═══════════════════════════════════════════════════════════════
+let channel = null;
+try {
+  channel = new BroadcastChannel('ding-bus');
+  console.log('[ding-bus] Genesis channel created OK');
+} catch(e) { console.warn('[ding-bus] Channel creation failed:', e); }
+
+if (channel) {
+  channel.onmessage = (e) => {
+    const msg = e.data;
+    if (!msg?.type) return;
+
+    if (msg.type === 'ding:req-wram' && gen) {
+      channel.postMessage({ type:'ding:wram', wram: Array.from(gen.bus.wram), platform:'Genesis' });
+      return;
+    }
+    if (msg.type === 'ding:req-game-state') {
+      if (romMd5) channel.postMessage({ type:'ding:game-loaded', md5:romMd5, headerTitle:document.getElementById('rom-name').textContent, platform:'Genesis' });
+      return;
+    }
+    if (msg.type === 'ding:rich-presence') {
+      updateRichPresence(msg.text || ''); return;
+    }
+    if (msg.type === 'ding:game-title') {
+      if (!msg.title) return;
+      document.getElementById('rom-name').textContent = msg.title.toUpperCase();
+      document.getElementById('running-game-name').textContent = msg.title;
+      return;
+    }
+    if (msg.type === 'ding:switch-cancelled') {
+      pushEvent('m68k', 'Cockpit: game switch cancelled'); return;
+    }
+    if (msg.type === 'ding:load-state') {
+      if (!gen) return;
+      try { gen.loadState(msg.state); dingRuntime.reset(); pushEvent('m68k', `State loaded: ${msg.label||'unnamed'}`); }
+      catch(err) { pushEvent('m68k', `State load failed: ${err.message}`); }
+      return;
+    }
+    if (msg.type === 'ding:req-state' && gen) {
+      channel.postMessage({ type:'ding:state-snapshot', state: gen.saveState(), label: msg.label||'' }); return;
+    }
+    if (msg.type === 'ding:req-sram') {
+      if (!gen) { channel.postMessage({ type:'ding:sram-data', bytes:[], size:0, md5:romMd5, platform:'Genesis' }); return; }
+      const sz = sramSize();
+      if (!sz) { channel.postMessage({ type:'ding:sram-data', bytes:[], size:0, md5:romMd5, platform:'Genesis' }); return; }
+      channel.postMessage({ type:'ding:sram-data', bytes: Array.from(gen.bus.sramData.slice(0, sz)), size:sz, md5:romMd5, platform:'Genesis' });
+      pushEvent('m68k', `SRAM sent to Cockpit: ${sz.toLocaleString()} bytes`);
+      return;
+    }
+    if (msg.type === 'ding:write-mem') {
+      if (!gen) return;
+      const { address, value } = msg;
+      if (typeof address !== 'number' || typeof value !== 'number') return;
+      gen.bus.write8(address, value & 0xFF);
+      pushEvent('m68k', `MEM WRITE ${address.toString(16).toUpperCase().padStart(6,'0')} ← 0x${value.toString(16).toUpperCase().padStart(2,'0')}`);
+      return;
+    }
+    if (msg.type === 'ding:load-sram') {
+      if (!gen) return;
+      const u8 = new Uint8Array(msg.bytes || []);
+      if (!u8.length) return;
+      gen.bus.sramData.fill(0);
+      gen.bus.sramData.set(u8.slice(0, gen.bus.sramData.length));
+      gen.bus.sramDirty = true;
+      dingRuntime.reset();
+      pushEvent('m68k', `Player save loaded from Cockpit: ${u8.length.toLocaleString()} bytes`);
+      return;
+    }
+    if (msg.type === 'ding:set-update') {
+      const set = msg.achievements || [];
+      const lbs = msg.leaderboards || [];
+      if (!set.length && !lbs.length) return;
+      dingRuntime.loadSet(set, lbs, msg.gameId ?? null);
+      const lbSuffix = lbs.length ? ` · ${lbs.length} LB` : '';
+      updateSetStatus('ok', `✓ ${set.length} achievement${set.length!==1?'s':''} loaded from Cockpit${lbSuffix}`);
+      achTabSwitch('live'); renderAchLive(); renderLBCard();
+      pushEvent('m68k', `Set updated from Cockpit: ${set.length} achievements${lbSuffix}`);
+      return;
+    }
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ACHIEVEMENT LOADER (offline + server)
+// ═══════════════════════════════════════════════════════════════
+async function dingFetchSet(md5hex) {
+  const normalize = d => {
+    if (!d) return null;
+    if (Array.isArray(d)) return { achievements:d, leaderboards:[] };
+    if (Array.isArray(d.achievements)) return { achievements:d.achievements, leaderboards: Array.isArray(d.leaderboards)?d.leaderboards:[] };
+    return null;
+  };
+  try {
+    const res = await fetch(`./sets/${md5hex}.json`);
+    if (res.ok) { const n = normalize(await res.json()); if (n) return n; }
+  } catch(e) {}
+  if (typeof DING_SETS !== 'undefined' && DING_SETS[md5hex]) return normalize(DING_SETS[md5hex]);
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SMD DEINTERLEAVE (.smd format support)
+// The Super Magic Drive format stores ROM data interleaved in 16KB blocks.
+// Each block splits bytes into two halves: odd bytes first, then even bytes.
+// Reference: https://www.zophar.net/fileuploads/2/10614uauyw/genesis_rom_formats.txt
+// ═══════════════════════════════════════════════════════════════
+function deinterleaveSMD(buf) {
+  const data = new Uint8Array(buf);
+  const HEADER = 512;
+  if (data.length <= HEADER) return buf;
+  const rom    = new Uint8Array(data.length - HEADER);
+  let pos = 0;
+  for (let i = HEADER; i < data.length; i += 16384) {
+    const blockLen = Math.min(16384, data.length - i);
+    const half     = blockLen >> 1;
+    for (let j = 0; j < half; j++) {
+      rom[pos + j * 2 + 1] = data[i + j];
+      rom[pos + j * 2    ] = data[i + j + half];
+    }
+    pos += blockLen;
+  }
+  return rom.buffer;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REGION
+// ═══════════════════════════════════════════════════════════════
+function setRegion(r) {
+  currentRegion = r;
+  document.getElementById('region-ntsc').classList.toggle('on', r === 'NTSC');
+  document.getElementById('region-pal').classList.toggle('on',  r === 'PAL');
+  // Resize canvas if PAL (320x240 → 640x480 at 2x)
+  const canvas = document.getElementById('gen-canvas');
+  if (typeof GEN_SCALE !== 'undefined' && typeof GEN_W !== 'undefined') {
+    const h = r === 'PAL' ? 240 : 224;
+    canvas.width  = GEN_W * GEN_SCALE;
+    canvas.height = h    * GEN_SCALE;
+  }
+  if (gen?.setRegion) gen.setRegion(r);
+  pushEvent('m68k', `Region set to ${r}`);
+}
+
+function updateRomMeta(buf) {
+  // Genesis ROM header lives at 0x100–0x1FF
+  // Title (domestic): 0x120–0x14F
+  // Title (intl):     0x150–0x17F
+  // Serial:           0x180–0x18D
+  // Regions:          0x1F0–0x1F3
+  const view = new Uint8Array(buf);
+  const str  = (start, len) => {
+    let s = '';
+    for (let i = 0; i < len; i++) {
+      const b = view[start + i];
+      if (b === 0 || b === 0x20 && !s.trim()) continue;
+      s += String.fromCharCode(b);
+    }
+    return s.replace(/\s+/g,' ').trim();
+  };
+  const title   = str(0x150, 48) || str(0x120, 48) || '—';
+  const dev     = str(0x110, 16) || '—'; // console name doubles as dev in early games
+  const serial  = str(0x180, 14) || '—';
+  const regions = str(0x1F0, 4)  || '—';
+
+  document.getElementById('meta-title').textContent   = title;
+  document.getElementById('meta-dev').textContent     = dev;
+  document.getElementById('meta-serial').textContent  = serial;
+  document.getElementById('meta-regions').textContent = regions;
+
+  // Auto-select region from ROM header
+  if (/E/i.test(regions) && !/J|U/i.test(regions)) setRegion('PAL');
+  else setRegion('NTSC');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SRAM
+// ═══════════════════════════════════════════════════════════════
+let sramFileHandle  = null;
+let sramFlushTimer  = null;
+
+function sramSize() {
+  if (!gen?.bus) return 0;
+  return gen.bus.hasSRAM ? gen.bus.sramData.length : 0;
+}
+
+function sramLsKey(hash) { return `ding-gen-sram-${hash}`; }
+
+function sramSaveLs() {
+  if (!romMd5 || !gen) return;
+  const sz = sramSize(); if (!sz) return;
+  const b64 = btoa(String.fromCharCode(...gen.bus.sramData.slice(0, sz)));
+  try { localStorage.setItem(sramLsKey(romMd5), b64); } catch(e) {}
+}
+
+function sramLoadLs(crc) {
+  try {
+    const b64 = localStorage.getItem(sramLsKey(crc));
+    if (!b64) return false;
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    if (gen && bytes.length <= gen.bus.sramData.length) { gen.bus.sramData.set(bytes); return true; }
+  } catch(e) {}
+  return false;
+}
+
+function sramFileName() {
+  return document.getElementById('rom-name').textContent.toLowerCase().replace(/\s+/g,'-') + '.sav';
+}
+
+async function sramWriteFile(handle) {
+  if (!gen) return;
+  const sz = sramSize(); if (!sz) return;
+  try {
+    const w = await handle.createWritable();
+    await w.write(gen.bus.sramData.slice(0, sz));
+    await w.close();
+  } catch(e) { console.warn('[sram] write failed:', e); sramFileHandle = null; }
+}
+
+function sramScheduleFlush() {
+  if (sramFlushTimer) clearTimeout(sramFlushTimer);
+  sramFlushTimer = setTimeout(sramFlush, 3000);
+}
+
+async function sramFlush() {
+  if (!gen?.bus.sramDirty || !romMd5) return;
+  gen.bus.sramDirty = false;
+  sramSaveLs();
+  if (sramFileHandle) await sramWriteFile(sramFileHandle);
+  updateSaveCard();
+}
+
+async function sramLoad(crc) {
+  if (!gen || !sramSize()) return;
+  if ('showOpenFilePicker' in window) {
+    try {
+      const [fh] = await window.showOpenFilePicker({
+        types:[{description:'Genesis Save',accept:{'application/octet-stream':['.sav','.srm']}}],
+      });
+      const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+      if (bytes.length <= gen.bus.sramData.length) {
+        gen.bus.sramData.set(bytes);
+        sramFileHandle = fh;
+        pushEvent('m68k', `SRAM loaded: ${(await fh.getFile()).name}`);
+        return;
+      }
+    } catch(e) { /* cancelled */ }
+  }
+  if (sramLoadLs(crc)) pushEvent('m68k', `SRAM restored from browser storage (${crc})`);
+}
+
+function sramExport() {
+  if (!gen) return;
+  const sz = sramSize();
+  if (!sz) { alert('This ROM has no battery-backed save RAM.'); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([gen.bus.sramData.slice(0, sz)],{type:'application/octet-stream'}));
+  a.download = sramFileName(); a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  pushEvent('m68k', `SRAM exported: ${sramFileName()}`);
+}
+
+function sramImport() {
+  if (!gen) return;
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.sav,.srm';
+  inp.onchange = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length > gen.bus.sramData.length) { alert(`Save too large (${bytes.length} bytes).`); return; }
+    gen.bus.sramData.set(bytes); gen.bus.sramDirty = true;
+    sramFlush(); pushEvent('m68k', `SRAM imported: ${file.name}`);
+  };
+  inp.click();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SAVE STATE (.ding format — same wrapper as GB emulator)
+// ═══════════════════════════════════════════════════════════════
+const DING_MAGIC   = [0x44, 0x49, 0x4E, 0x47];
+const DING_VERSION = 1;
+const DING_HDR     = 64;
+
+function buildDingHeader(crc32hex, label, ts) {
+  const buf = new Uint8Array(DING_HDR);
+  DING_MAGIC.forEach((b,i) => buf[i]=b);
+  buf[4] = DING_VERSION;
+  const crcStr = (crc32hex||'00000000').substring(0,8).padEnd(8,'0');
+  for(let i=0;i<8;i++) buf[5+i] = crcStr.charCodeAt(i);
+  const t = Math.floor((ts||Date.now())/1000) & 0xFFFFFFFF;
+  buf[13]=t&0xFF; buf[14]=(t>>8)&0xFF; buf[15]=(t>>16)&0xFF; buf[16]=(t>>24)&0xFF;
+  const enc = new TextEncoder().encode((label||'').substring(0,31));
+  enc.forEach((b,i) => buf[17+i]=b);
+  return buf;
+}
+
+function parseDingHeader(buf) {
+  const v = new Uint8Array(buf, 0, DING_HDR);
+  if (v[0]!==0x44||v[1]!==0x49||v[2]!==0x4E||v[3]!==0x47) throw new Error('Not a .ding file');
+  if (v[4] !== DING_VERSION) throw new Error(`Unsupported version: ${v[4]}`);
+  let crc = ''; for(let i=5;i<13;i++) crc += String.fromCharCode(v[i]);
+  const t = v[13]|(v[14]<<8)|(v[15]<<16)|(v[16]<<24);
+  let label = ''; for(let i=17;i<49;i++) { if(!v[i]) break; label += String.fromCharCode(v[i]); }
+  return { crc, ts:t*1000, label };
+}
+
+function serializeState(gen, crc32hex, label) {
+  const stateEnc = new TextEncoder().encode(JSON.stringify(gen.saveState()));
+  const buf      = new Uint8Array(DING_HDR + 4 + stateEnc.length);
+  buf.set(buildDingHeader(crc32hex, label, Date.now()), 0);
+  const len = stateEnc.length;
+  buf[DING_HDR]=len&0xFF; buf[DING_HDR+1]=(len>>8)&0xFF; buf[DING_HDR+2]=(len>>16)&0xFF; buf[DING_HDR+3]=(len>>24)&0xFF;
+  buf.set(stateEnc, DING_HDR+4);
+  return buf;
+}
+
+async function saveStateToDisk() {
+  if (!gen) return;
+  const label   = document.getElementById('rom-name').textContent;
+  const ts      = new Date().toISOString().slice(0,19).replace('T',' ');
+  const suggest = (romMd5||'UNKNOWN') + '-' + label.toLowerCase().replace(/\s+/g,'-') + '.ding';
+  const buf     = serializeState(gen, romMd5, label + ' — ' + ts);
+  if ('showSaveFilePicker' in window) {
+    try {
+      const fh = await window.showSaveFilePicker({
+        suggestedName: suggest,
+        types:[{description:'D!NG Save State',accept:{'application/octet-stream':['.ding']}}],
+      });
+      const w = await fh.createWritable(); await w.write(buf); await w.close();
+      pushEvent('m68k', `State saved: ${suggest}`); return;
+    } catch(e) { if (e.name==='AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf],{type:'application/octet-stream'}));
+  a.download = suggest; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  pushEvent('m68k', `State downloaded: ${suggest}`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ROM LOADING
+// ═══════════════════════════════════════════════════════════════
+function loadFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['bin','md','gen','smd'].includes(ext)) {
+    alert(`Unsupported file type: .${ext}\nExpected .bin, .md, .gen, or .smd`);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async e => {
+    let buf = e.target.result;
+
+    // Deinterleave SMD format before anything else
+    if (ext === 'smd') {
+      buf = deinterleaveSMD(buf);
+      pushEvent('m68k', 'SMD format detected — deinterleaved');
+    }
+
+    const hash        = md5(buf);
+    const headerTitle = romHeaderTitle(buf);
+    romMd5 = hash;
+
+    const crcEl = document.getElementById('crc-val');
+    if (crcEl) crcEl.textContent = hash;
+
+    updateSetStatus('loading', `MD5: ${hash} · "${headerTitle}" · Fetching set…`);
+    updateRomMeta(buf);
+
+    // Boot the emulator
+    gen = new Genesis();
+    gen.loadROM(buf);
+    gen.setRegion(currentRegion);
+    gen.apu.initAudio();
+    running = true; paused = false;
+    fpsCount = 0; fpsLast = 0; currentFps = 0;
+    prevSnapState = {}; eventLog = [];
+    dingRuntime.reset();
+
+    // Update UI
+    const nameEl = document.getElementById('rom-name');
+    nameEl.textContent = headerTitle || file.name.replace(/\.(bin|md|gen|smd)$/i,'').toUpperCase();
+    document.getElementById('running-game-name').textContent = headerTitle || nameEl.textContent;
+    document.getElementById('running-badge').classList.add('visible');
+    document.getElementById('gen-canvas').classList.add('visible');
+    document.getElementById('canvas-off').classList.add('hidden');
+    document.getElementById('gen-btns').classList.add('visible');
+    document.getElementById('dbg-dot').classList.add('live');
+    pushEvent('m68k', `ROM loaded: ${file.name} · MD5: ${hash}`);
+
+    startLoop();
+
+    // Load SRAM
+    sramFileHandle = null;
+    await sramLoad(hash);
+    updateSaveCard();
+
+    // Broadcast game identity to Cockpit
+    channel?.postMessage({ type:'ding:game-loaded', md5:hash, headerTitle, fileName:file.name, platform:'Genesis' });
+
+    // Resolve title from local server (silent fallback)
+    try {
+      const res = await fetch(`http://localhost:3000/api/hash/${hash}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.title) {
+          document.getElementById('rom-name').textContent = data.title.toUpperCase();
+          document.getElementById('running-game-name').textContent = data.title;
+        }
+      }
+    } catch(e) {}
+
+    // Fetch achievement set
+    const setData = await dingFetchSet(hash);
+    if (setData && (setData.achievements.length || setData.leaderboards.length)) {
+      dingRuntime.loadSet(setData.achievements, setData.leaderboards, setData.gameId ?? null);
+      const lbSuffix = setData.leaderboards.length ? ` · ${setData.leaderboards.length} LB` : '';
+      updateSetStatus('ok', `✓ ${setData.achievements.length} achievement${setData.achievements.length!==1?'s':''} loaded${lbSuffix} · ${hash}`);
+      achTabSwitch('live'); renderAchLive(); renderLBCard();
+      pushEvent('m68k', `Set loaded: ${setData.achievements.length} achievements${lbSuffix}`);
+    } else {
+      updateSetStatus('none', `No set found for ${hash}`,
+        `Place <span style="color:var(--teal)">${hash}.json</span> in <span style="color:var(--amber)">./sets/</span> or add to <span style="color:var(--teal)">ding-sets.js</span>.`);
+      pushEvent('m68k', `No achievement set for MD5 ${hash}`);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function setDrag(on) { document.getElementById('canvas-off').classList.toggle('drag', on); }
+
+// ═══════════════════════════════════════════════════════════════
+// GAME LOOP
+// ═══════════════════════════════════════════════════════════════
+function startLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  // Build the offscreen canvas at the correct size once GEN_W is defined
+  if (typeof GEN_W !== 'undefined' && typeof GEN_H !== 'undefined') {
+    offscreen = new OffscreenCanvas(GEN_W, currentRegion === 'PAL' ? 240 : GEN_H);
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+function loop(ts) {
+  rafId = requestAnimationFrame(loop);
+  if (!gen || paused) return;
+
+  gpPoll();
+
+  const frames = fastForward ? FF_MULTIPLIER : 1;
+  for (let i = 0; i < frames; i++) {
+    gen.runFrame();
+    dingTick();
+  }
+
+  fpsCount++;
+  if (ts - fpsLast >= 1000) {
+    currentFps = fpsCount; fpsCount = 0; fpsLast = ts;
+    document.getElementById('fps-display').textContent = currentFps + ' FPS';
+    updateDebugSnap();
+    if (dbgOpen) renderDebugBody();
+    if (gen?.bus.sramDirty) sramScheduleFlush();
+    updateSaveCard();
+  }
+
+  // Broadcast WRAM to Cockpit ~10×/sec (every 6 frames at 60fps)
+  if (channel && gen && fpsCount % 6 === 0) {
+    channel.postMessage({ type:'ding:wram', wram: Array.from(gen.bus.wram), platform:'Genesis' });
+  }
+
+  // Render frame
+  if (gen.vdp?.framebuf && offscreen) {
+    const h = currentRegion === 'PAL' ? 240 : GEN_H;
+    const img = new ImageData(gen.vdp.framebuf.slice(), GEN_W, h);
+    offscreen.getContext('2d').putImageData(img, 0, 0);
+    const canvas = document.getElementById('gen-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(offscreen, 0, 0, GEN_W * GEN_SCALE, h * GEN_SCALE);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// D!NG ENGINE TICK
+// ═══════════════════════════════════════════════════════════════
+const dingRuntime = new DingRuntime();
+
+function dingTick() {
+  if (!gen || !dingRuntime.hasSet) return;
+  dingRuntime.tick(dingBuildState(gen));
+}
+
+dingRuntime.onUnlock(ach => {
+  playUnlockChime(); showToast(ach);
+  channel?.postMessage({ type:'ding:unlock', gameId:dingRuntime.gameId,
+    achievement:{ name:ach.name, icon:ach.icon, pts:ach.pts, desc:ach.desc } });
+  renderAchLive();
+});
+
+dingRuntime.onLBSubmit((lb, formatted, isNewPB, rawValue) => {
+  showLBToast(lb, formatted, isNewPB); renderLBCard();
+  channel?.postMessage({ type:'ding:lb-submit', lbId:lb.id, title:lb.title,
+    value:rawValue, formatted, format:lb.format, lowerIsBetter:lb.lowerIsBetter });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLS
+// ═══════════════════════════════════════════════════════════════
+function togglePause() {
+  paused = !paused;
+  document.getElementById('btn-pause').textContent = paused ? '▶ Resume' : '⏸ Pause';
+  if (paused && gen?.apu?.ctx) gen.apu.ctx.suspend().catch(()=>{});
+  if (!paused && gen?.apu?.ctx && !muted) gen.apu.ctx.resume().catch(()=>{});
+}
+
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('btn-mute').textContent = muted ? '🔇 Unmute' : '🔊 Mute';
+  if (gen?.apu?.ctx) {
+    if (muted) gen.apu.ctx.suspend().catch(()=>{});
+    else       gen.apu.ctx.resume().catch(()=>{});
+  }
+}
+
+function onReset() {
+  if (!gen?.bus?.fullRom) return;
+  const savedSram      = gen.bus.hasSRAM ? gen.bus.sramData.slice() : null;
+  const savedSramDirty = gen.bus.sramDirty;
+  const rom            = gen.bus.fullRom.buffer.slice();
+  gen = new Genesis();
+  gen.loadROM(rom);
+  gen.setRegion(currentRegion);
+  if (savedSram && savedSram.length <= gen.bus.sramData.length) {
+    gen.bus.sramData.set(savedSram);
+    gen.bus.sramDirty = savedSramDirty;
+  }
+  gen.apu.initAudio();
+  dingRuntime.reset();
+  prevSnapState = {}; eventLog = [];
+  pushEvent('m68k', 'ROM reset — SRAM preserved');
+}
+
+async function onEject() {
+  sramFlush(); sramFileHandle = null;
+  if (rafId) cancelAnimationFrame(rafId); rafId = null;
+  if (gen?.apu) gen.apu.stopAudio();
+  gen = null; running = false; paused = false;
+  dingRuntime.eject();
+  romMd5 = null;
+  document.getElementById('rom-name').textContent = 'NO ROM LOADED';
+  document.getElementById('fps-display').textContent = '';
+  document.getElementById('running-game-name').textContent = 'GENESIS ACTIVE';
+  document.getElementById('running-badge').classList.remove('visible');
+  document.getElementById('gen-canvas').classList.remove('visible');
+  document.getElementById('canvas-off').classList.remove('hidden');
+  document.getElementById('gen-btns').classList.remove('visible');
+  document.getElementById('dbg-dot').classList.remove('live');
+  document.getElementById('dbg-hint').textContent = '';
+  document.getElementById('meta-title').textContent   = '—';
+  document.getElementById('meta-dev').textContent     = '—';
+  document.getElementById('meta-serial').textContent  = '—';
+  document.getElementById('meta-regions').textContent = '—';
+  updateSetStatus(null, 'Load a ROM to auto-fetch its achievement set.');
+  updateRichPresence('');
+  renderAchLive(); renderLBCard();
+  const canvas = document.getElementById('gen-canvas');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  dbgSnap = null; if (dbgOpen) renderDebugBody();
+  updateSaveCard();
+}
+
+// Keyboard input
+document.addEventListener('keydown', e => {
+  // KB remap mode
+  if (kbListening && kbRemapStep >= 0) {
+    if (['Control','Shift','Alt','Meta'].includes(e.key)) return;
+    e.preventDefault();
+    const key = e.key;
+    if (key === 'Tab' || key === 'p' || key === 'P') return;
+    if (!kbMap[kbRemapStep].includes(key)) { kbMap[kbRemapStep].push(key); kbSaveMap(); buildKeyMap(); }
+    kbListening = false; kbRemapStep = -1; renderControlsCard(); return;
+  }
+  // Hotkeys
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (!fastForward && gen) {
+      fastForward = true;
+      gen.apu?.ctx?.suspend().catch(()=>{});
+      document.getElementById('fps-display').style.color = 'var(--amber)';
+    }
+    return;
+  }
+  if (e.key === 'p' || e.key === 'P') { if (gen) togglePause(); return; }
+  // Game input — pad 0 (controller 1)
+  const btn = KEY_MAP[e.key];
+  if (btn !== undefined && gen) { e.preventDefault(); gen.pressButton(0, btn, true); }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key === 'Tab') {
+    fastForward = false;
+    if (gen && !muted) gen.apu?.ctx?.resume().catch(()=>{});
+    document.getElementById('fps-display').style.color = ''; return;
+  }
+  const btn = KEY_MAP[e.key];
+  if (btn !== undefined && gen) gen.pressButton(0, btn, false);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLS CARD (keyboard + controller tabs)
+// ═══════════════════════════════════════════════════════════════
+function renderControlsCard() {
+  const body = document.getElementById('controls-card-body');
+  if (!body) return;
+  const icon = document.getElementById('ctrl-card-icon');
+  if (icon) icon.textContent = gpIndex !== null ? '🎮' : '⌨️';
+  body.innerHTML = '';
+
+  const tabs = document.createElement('div'); tabs.className = 'ctrl-tabs';
+  const kbBtn = document.createElement('div');
+  kbBtn.className = 'ctrl-tab' + (ctrlTab === 'kb' ? ' on' : '');
+  kbBtn.textContent = '⌨️ Keyboard';
+  kbBtn.onclick = () => { ctrlTab = 'kb'; renderControlsCard(); };
+  const gpBtn = document.createElement('div');
+  gpBtn.className = 'ctrl-tab' + (ctrlTab === 'gp' ? ' on' : '') + (gpIndex === null ? ' disabled' : '');
+  gpBtn.textContent = '🎮 Controller';
+  if (gpIndex !== null) gpBtn.onclick = () => { ctrlTab = 'gp'; renderControlsCard(); };
+  tabs.appendChild(kbBtn); tabs.appendChild(gpBtn);
+  body.appendChild(tabs);
+
+  if (ctrlTab === 'kb') renderKbPane(body);
+  else                   renderGpPane(body);
+
+  const hk = document.createElement('div'); hk.className = 'hotkey-section';
+  hk.innerHTML = '<div class="hotkey-section-label">Hotkeys (fixed)</div>' +
+    [['Pause','P'],['Fast Forward','Tab']].map(([a,k]) =>
+      `<div class="hotkey-row"><div class="hotkey-action">${a}</div><div class="hotkey-chips"><div class="hotkey-chip">${k}</div></div></div>`
+    ).join('');
+  body.appendChild(hk);
+}
+
+function makeRemapSection(actions, bindingsMap, defaultMap, saveMapFn, buildFn, isListeningFn, remapStepVar, listenFn) {
+  const sec = document.createElement('div'); sec.className = 'remap-section';
+
+  // Group actions by "type" (standard 8, then 6-button extras)
+  const groups = [
+    { label:'3-Button', actions: actions.slice(0, 8) },
+    { label:'6-Button Extras', actions: actions.slice(8) },
+  ];
+
+  groups.forEach((group, gi) => {
+    if (gi > 0) {
+      const div = document.createElement('div'); div.className = 'remap-divider';
+      div.textContent = group.label; sec.appendChild(div);
+    }
+    group.actions.forEach((action, localIdx) => {
+      const i = gi * 8 + localIdx; // absolute index into bindingsMap
+      const absIdx = gi === 0 ? localIdx : 8 + localIdx;
+      const row = document.createElement('div'); row.className = 'remap-row';
+      const lbl = document.createElement('div'); lbl.className = 'remap-label'; lbl.textContent = action.label; row.appendChild(lbl);
+      const chips = document.createElement('div'); chips.className = 'remap-chips';
+      (bindingsMap[absIdx] || []).forEach(binding => {
+        const chip = document.createElement('span'); chip.className = 'bind-chip';
+        const label = typeof binding === 'number' ? gpBtnLabel(binding) : fmtKey(binding);
+        chip.textContent = label;
+        const del = document.createElement('button'); del.className = 'bind-chip-del'; del.textContent = '×';
+        del.onclick = () => {
+          bindingsMap[absIdx] = bindingsMap[absIdx].filter(b => b !== binding);
+          saveMapFn(); if (buildFn) buildFn(); renderControlsCard();
+        };
+        chip.appendChild(del); chips.appendChild(chip);
+      });
+      const isListening = isListeningFn(absIdx);
+      const addBtn = document.createElement('button');
+      addBtn.className = 'remap-add-btn' + (isListening ? ' listening' : '');
+      addBtn.textContent = isListening ? 'Press…' : '+ Add';
+      addBtn.onclick = () => listenFn(absIdx, isListening);
+      chips.appendChild(addBtn);
+      const resetBtn = document.createElement('button'); resetBtn.className = 'remap-reset-btn'; resetBtn.textContent = '↺';
+      resetBtn.onclick = () => { bindingsMap[absIdx] = [...defaultMap[absIdx]]; saveMapFn(); if (buildFn) buildFn(); renderControlsCard(); };
+      row.appendChild(chips); row.appendChild(resetBtn); sec.appendChild(row);
+    });
+  });
+  return sec;
+}
+
+function renderKbPane(body) {
+  const sec = makeRemapSection(
+    KB_ACTIONS, kbMap, KB_DEFAULT_MAP, kbSaveMap, buildKeyMap,
+    (i) => kbListening && kbRemapStep === i,
+    null,
+    (i, isListening) => {
+      if (isListening) { kbListening = false; kbRemapStep = -1; renderControlsCard(); return; }
+      kbListening = true; kbRemapStep = i; renderControlsCard();
+    }
+  );
+  body.appendChild(sec);
+  const footer = document.createElement('div'); footer.className = 'ctrl-footer';
+  const resetAll = document.createElement('button'); resetAll.className = 'remap-reset-btn'; resetAll.style.flex = '1';
+  resetAll.textContent = '↺ Reset All Keyboard Defaults';
+  resetAll.onclick = () => { kbMap = KB_DEFAULT_MAP.map(k => [...k]); kbSaveMap(); buildKeyMap(); renderControlsCard(); };
+  footer.appendChild(resetAll); body.appendChild(footer);
+}
+
+function renderGpPane(body) {
+  if (gpIndex !== null) {
+    const gps = navigator.getGamepads()[gpIndex];
+    const bar = document.createElement('div'); bar.className = 'ctrl-gp-status';
+    const dot = document.createElement('div'); dot.className = 'ctrl-gp-dot';
+    bar.appendChild(dot);
+    const name = document.createElement('span');
+    const id = gps?.id || 'Controller'; name.textContent = id.length > 34 ? id.slice(0, 34) + '…' : id;
+    bar.appendChild(name); body.appendChild(bar);
+  }
+  const sec = makeRemapSection(
+    GP_ACTIONS, gpMap, GP_DEFAULT_MAP, gpSaveMap, null,
+    (i) => gpRemapping && gpRemapStep === i,
+    null,
+    (i, isListening) => {
+      if (isListening) { gpRemapping = false; gpRemapStep = -1; renderControlsCard(); return; }
+      gpRemapping = true; gpRemapStep = i; renderControlsCard();
+    }
+  );
+  body.appendChild(sec);
+  const footer = document.createElement('div'); footer.className = 'ctrl-footer';
+  const resetAll = document.createElement('button'); resetAll.className = 'remap-reset-btn'; resetAll.style.flex = '1';
+  resetAll.textContent = '↺ Reset All Controller Defaults';
+  resetAll.onclick = () => { gpMap = GP_DEFAULT_MAP.map(b => [...b]); gpSaveMap(); renderControlsCard(); };
+  footer.appendChild(resetAll); body.appendChild(footer);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SAVE CARD UI
+// ═══════════════════════════════════════════════════════════════
+function updateSaveCard() {
+  const dot = document.getElementById('save-dot');
+  const text = document.getElementById('save-status-text');
+  const dest = document.getElementById('save-dest-val');
+  const expBtn = document.getElementById('btn-export-sram');
+  const impBtn = document.getElementById('btn-import-sram');
+  if (!dot) return;
+  if (!gen || !romMd5) {
+    dot.className = 'save-dot'; text.textContent = 'No ROM loaded'; dest.textContent = '—';
+    expBtn.disabled = impBtn.disabled = true; return;
+  }
+  const sz = sramSize();
+  if (!sz) {
+    dot.className = 'save-dot'; text.textContent = 'No save RAM (this game)'; dest.textContent = '—';
+    expBtn.disabled = impBtn.disabled = true; return;
+  }
+  expBtn.disabled = impBtn.disabled = false;
+  dot.className   = gen.bus.sramDirty ? 'save-dot dirty' : 'save-dot active';
+  text.textContent = gen.bus.sramDirty ? 'Unsaved changes…' : 'Saved';
+  dest.textContent = sramFileHandle ? sramFileHandle.name : 'Browser storage';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RICH PRESENCE
+// ═══════════════════════════════════════════════════════════════
+function updateRichPresence(text) {
+  const el = document.getElementById('rp-bar');
+  el.textContent = text ? '◎  ' + text : '';
+  el.style.display = text ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// D!NG ENGINE UI
+// ═══════════════════════════════════════════════════════════════
+function updateSetStatus(state, msg, hint) {
+  const styles = {
+    ok:      { bg:'rgba(77,255,145,0.07)',  border:'1px solid rgba(77,255,145,0.25)',  color:'var(--green)', text:'● Set Active'    },
+    none:    { bg:'rgba(245,166,35,0.07)', border:'1px solid rgba(245,166,35,0.25)', color:'var(--amber)', text:'○ No Set Found'  },
+    loading: { bg:'rgba(0,212,200,0.07)',   border:'1px solid rgba(0,212,200,0.25)',  color:'var(--teal)',  text:'◌ Loading…'      },
+    null:    { bg:'var(--s2)',              border:'1px solid var(--border)',          color:'var(--muted)', text:'○ No ROM Loaded' },
+  };
+  const st = styles[state] || styles.null;
+  const box = document.getElementById('set-status-box');
+  const label = document.getElementById('set-status-label');
+  const msgEl = document.getElementById('set-status-msg');
+  const hintEl = document.getElementById('set-status-hint');
+  box.style.background = st.bg; box.style.border = st.border;
+  label.style.color = st.color; label.textContent = st.text;
+  msgEl.innerHTML = msg || '';
+  hintEl.style.display = hint ? '' : 'none';
+  hintEl.innerHTML = hint || '';
+  const liveTab = document.getElementById('ach-tab-live');
+  const earned = dingRuntime.unlocked.size;
+  liveTab.textContent = earned > 0 ? `Live ${earned}/${dingRuntime.achCount}` : 'Live';
+}
+
+function achTabSwitch(tab) {
+  document.getElementById('ach-pane-config').style.display = tab==='config' ? 'flex' : 'none';
+  document.getElementById('ach-pane-live').style.display   = tab==='live'   ? 'block': 'none';
+  document.getElementById('ach-tab-config').classList.toggle('on', tab==='config');
+  document.getElementById('ach-tab-live').classList.toggle('on',   tab==='live');
+}
+
+function renderAchLive() {
+  const list = document.getElementById('ach-live-list');
+  const liveTab = document.getElementById('ach-tab-live');
+  const earned = dingRuntime.unlocked.size;
+  liveTab.textContent = earned > 0 ? `Live ${earned}/${dingRuntime.achCount}` : 'Live';
+  if (!dingRuntime.achCount) {
+    list.innerHTML = '<div class="ach-live-empty">No set loaded.<br>Configure in the Config tab.</div>'; return;
+  }
+  const items = dingRuntime.getAchievements(gen ? dingBuildState(gen) : null);
+  list.innerHTML = items.map(({ach, unlocked, passing}) => {
+    const cls = unlocked ? 'done' : passing ? 'pass' : '';
+    const tag = unlocked ? `<div class="ach-live-tag tag-unlocked">UNLOCKED</div>` : `<div class="ach-live-tag tag-watching">LIVE</div>`;
+    return `<div class="ach-live-row ${cls}"><div class="ach-live-indicator"></div><div class="ach-live-icon">${ach.icon||'🏆'}</div><div class="ach-live-name">${ach.name}</div><div class="ach-live-pts">${ach.pts}p</div>${tag}</div>`;
+  }).join('');
+}
+
+function achLoadManual() {
+  const raw = document.getElementById('ach-logic-input').value.trim();
+  const gid = parseInt(document.getElementById('ach-gameid').value, 10);
+  const statusEl = document.getElementById('ach-parse-status');
+  const ta = document.getElementById('ach-logic-input');
+  statusEl.style.display = 'block'; ta.classList.remove('error');
+  if (!raw) { ta.classList.add('error'); statusEl.className='ach-parse-status err'; statusEl.textContent='✕ Paste achievement logic JSON first.'; return; }
+  let parsed; try { parsed = JSON.parse(raw); } catch(e) { ta.classList.add('error'); statusEl.className='ach-parse-status err'; statusEl.textContent='✕ JSON error: '+e.message; return; }
+  let achArr, lbArr;
+  if (Array.isArray(parsed)) { achArr=parsed; lbArr=[]; }
+  else if (parsed?.achievements) { achArr=parsed.achievements; lbArr=parsed.leaderboards||[]; }
+  else { ta.classList.add('error'); statusEl.className='ach-parse-status err'; statusEl.textContent='✕ Expected array or { achievements, leaderboards }.'; return; }
+  let ctr = 0;
+  achArr.forEach(a => { const ap=cs=>cs?.forEach(c=>{if(!c.id)c.id='mc'+ctr++;}); ap(a.logic?.core); a.logic?.alts?.forEach(ap); });
+  lbArr.forEach(lb => { ['start','cancel','submit','value'].forEach(p=>lb[p]?.forEach(c=>{if(!c.id)c.id='mclb'+ctr++;})); });
+  const gameId = isNaN(gid) ? (parsed.gameId ?? null) : gid;
+  dingRuntime.loadSet(achArr, lbArr, gameId);
+  statusEl.className='ach-parse-status ok'; statusEl.textContent=`✓ Loaded ${achArr.length} achievement${achArr.length!==1?'s':''}${lbArr.length?` · ${lbArr.length} LB`:''}${gameId!==null?' · Game '+gameId:''}`;
+  achTabSwitch('live'); renderAchLive(); renderLBCard();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LEADERBOARD CARD UI
+// ═══════════════════════════════════════════════════════════════
+function renderLBCard() {
+  const body = document.getElementById('lb-card-body');
+  if (!body) return;
+  const items = dingRuntime.getLeaderboards().filter(({lb}) => !lb.hidden);
+  if (!items.length) { body.innerHTML=`<div style="font-family:'League Spartan',sans-serif;font-size:0.65rem;color:var(--muted);text-align:center;padding:0.25rem 0">${dingRuntime.lbCount?'All leaderboards are hidden.':'No leaderboards loaded.'}</div>`; return; }
+  body.innerHTML = '';
+  items.forEach(({lb, state:st}, idx) => {
+    if (!st) return;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:0.6rem;padding:0.45rem 0;border-bottom:1px solid var(--border);';
+    if (idx === items.length-1) row.style.borderBottom = 'none';
+    const dot = document.createElement('div');
+    dot.style.cssText = `width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${st.active?'var(--amber)':st.lastValue!==null?'var(--green)':'var(--muted)'};${st.active?'box-shadow:0 0 6px var(--amber);animation:pulse 1s infinite;':''}`;
+    row.appendChild(dot);
+    const info = document.createElement('div'); info.style.cssText='flex:1;min-width:0;';
+    const title = document.createElement('div'); title.style.cssText="font-family:'League Spartan',sans-serif;font-size:0.72rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"; title.textContent=lb.title; info.appendChild(title);
+    const sub = document.createElement('div'); sub.style.cssText="font-family:'League Spartan',sans-serif;font-size:0.6rem;margin-top:0.1rem;";
+    if (st.active) { sub.style.color='var(--amber)'; sub.textContent='TRACKING…'; }
+    else if (st.lastFormatted!==null) { sub.style.color='var(--teal)'; sub.textContent=st.lastFormatted; }
+    else { sub.style.color='var(--muted)'; sub.textContent='Waiting…'; }
+    info.appendChild(sub); row.appendChild(info);
+    if (st.personalBest!==null) { const pb=document.createElement('div'); pb.style.cssText="font-family:'League Spartan',sans-serif;font-size:0.58rem;color:var(--amber);flex-shrink:0;"; pb.textContent='PB '+formatLBValue(st.personalBest,lb.format); row.appendChild(pb); }
+    body.appendChild(row);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TOAST SYSTEM
+// ═══════════════════════════════════════════════════════════════
+const _toastQueue = []; let _toastBusy = false;
+
+function playUnlockChime() {
+  const ctx = gen?.apu?.ctx;
+  if (!ctx || muted) return;
+  [[523.25,0],[659.25,0.18]].forEach(([freq,delay]) => {
+    const osc=ctx.createOscillator(), gain=ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type='sine'; osc.frequency.value=freq;
+    const t=ctx.currentTime+delay;
+    gain.gain.setValueAtTime(0,t); gain.gain.linearRampToValueAtTime(0.4,t+0.02); gain.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+    osc.start(t); osc.stop(t+0.5);
+  });
+}
+
+function showToast(ach) { _toastQueue.push(ach); if(!_toastBusy) _nextToast(); }
+
+function _nextToast() {
+  if (!_toastQueue.length) { _toastBusy=false; return; }
+  _toastBusy=true;
+  const ach=_toastQueue.shift();
+  const wrap=document.getElementById('toast-wrap');
+  const el=document.createElement('div'); el.className='toast';
+  el.innerHTML=`<div class="toast-icon">${ach.icon||'🏆'}</div><div class="toast-body"><div class="toast-label">Achievement Unlocked</div><div class="toast-name">${ach.name}</div><div class="toast-desc">${ach.desc||''}</div></div><div class="toast-pts">+${ach.pts}p</div>`;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.classList.add('out'); el.addEventListener('animationend',()=>{el.remove();_nextToast()},{once:true}); },4000);
+}
+
+function showLBToast(lb, formatted, isNewPB) {
+  const ctx = gen?.apu?.ctx;
+  if (ctx && !muted) {
+    [[659.25,0],[523.25,0.15]].forEach(([freq,delay]) => {
+      const osc=ctx.createOscillator(), gain=ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination); osc.type='sine'; osc.frequency.value=freq;
+      const t=ctx.currentTime+delay;
+      gain.gain.setValueAtTime(0,t); gain.gain.linearRampToValueAtTime(0.35,t+0.02); gain.gain.exponentialRampToValueAtTime(0.001,t+0.45);
+      osc.start(t); osc.stop(t+0.45);
+    });
+  }
+  const wrap=document.getElementById('toast-wrap');
+  const el=document.createElement('div'); el.className='toast'; el.style.borderColor='rgba(0,212,200,0.5)';
+  el.innerHTML=`<div class="toast-icon">🏅</div><div class="toast-body"><div class="toast-label" style="color:var(--teal)">${isNewPB?'New Personal Best!':'Score Submitted'}</div><div class="toast-name">${lb.title}</div><div class="toast-desc">${formatted}</div></div>`;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.classList.add('out'); el.addEventListener('animationend',()=>el.remove(),{once:true}); },4000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DEBUG PANEL
+// ═══════════════════════════════════════════════════════════════
+function pushEvent(tag, msg) {
+  const ts = new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  eventLog.unshift({ts,tag,msg,id:eventIdCounter++});
+  if (eventLog.length>80) eventLog.length=80;
+  if (dbgOpen && dbgTab==='log') renderDebugBody();
+}
+
+function updateDebugSnap() {
+  if (!gen) return;
+  const cpu = gen.cpu, vdp = gen.vdp, z80 = gen.z80, bus = gen.bus;
+  const h16 = v => v?.toString(16).toUpperCase().padStart(4,'0') ?? '????';
+  const h32 = v => v?.toString(16).toUpperCase().padStart(8,'0') ?? '????????';
+  const h8  = v => v?.toString(16).toUpperCase().padStart(2,'0') ?? '??';
+
+  dbgSnap = {
+    // 68K data and address registers
+    d: cpu?.d?.map(v => h32(v >>> 0))   ?? Array(8).fill('????????'),
+    a: cpu?.a?.map(v => h32(v >>> 0))   ?? Array(8).fill('????????'),
+    pc: h32((cpu?.pc ?? 0) >>> 0),
+    sr: h16(cpu?.sr ?? 0),
+    // CCR flags from lower 8 bits of SR
+    flagC: !!((cpu?.sr ?? 0) & 0x01),
+    flagV: !!((cpu?.sr ?? 0) & 0x02),
+    flagZ: !!((cpu?.sr ?? 0) & 0x04),
+    flagN: !!((cpu?.sr ?? 0) & 0x08),
+    flagX: !!((cpu?.sr ?? 0) & 0x10),
+    // Supervisor mode / interrupt level
+    ipl:  (cpu?.sr ?? 0) >> 8 & 0x07,
+    flagS: !!((cpu?.sr ?? 0) & 0x2000),
+    flagT: !!((cpu?.sr ?? 0) & 0x8000),
+    // VDP
+    vHCount: vdp?.hcounter ?? 0,
+    vVCount: vdp?.vcounter ?? 0,
+    vdpMode: vdp?.dmaActive ? 'DMA' : vdp?.vblank ? 'VBLANK' : vdp?.hblank ? 'HBLANK' : 'ACTIVE',
+    // Z80
+    z80a: h8(z80?.a ?? 0), z80f: h8(z80?.f ?? 0),
+    z80b: h8(z80?.b ?? 0), z80c: h8(z80?.c ?? 0),
+    z80pc: h16(z80?.pc ?? 0), z80sp: h16(z80?.sp ?? 0),
+    z80halted: !!z80?.halted,
+    z80busreq: !!bus?.z80BusReq,
+    z80reset:  !!bus?.z80Reset,
+    // APU
+    apu: gen.apu?.diag ?? null,
+    muted,
+  };
+
+  document.getElementById('dbg-hint').textContent =
+    `PC:${dbgSnap.pc} · V:${dbgSnap.vVCount} · ${dbgSnap.vdpMode}`;
+}
+
+function buildDebugTabs() {
+  const TABS = [['m68k','68K CPU'],['vdp','VDP'],['z80','Z80'],['apu','APU'],['log','EVENT LOG']];
+  document.getElementById('dbg-tabs').innerHTML = TABS.map(([id,label]) =>
+    `<div class="dbg-tab${dbgTab===id?' on':''}" data-tab="${id}">${label}</div>`
+  ).join('');
+  document.querySelectorAll('.dbg-tab').forEach(t => t.onclick = () => { dbgTab=t.dataset.tab; buildDebugTabs(); renderDebugBody(); });
+}
+
+function toggleDebug() {
+  dbgOpen = !dbgOpen;
+  document.getElementById('dbg-toggle').classList.toggle('open', dbgOpen);
+  document.getElementById('dbg-panel').classList.toggle('open', dbgOpen);
+  if (dbgOpen) { buildDebugTabs(); renderDebugBody(); }
+}
+
+function renderDebugBody() {
+  const el = document.getElementById('dbg-body');
+  if (!dbgSnap) { el.innerHTML = '<div class="dbg-empty">No ROM loaded.</div>'; return; }
+  const s = dbgSnap;
+
+  if (dbgTab === 'm68k') {
+    // Data registers D0–D7
+    const dRegs = s.d.map((v,i) => `<div class="dbg-reg"><div class="dbg-reg-name">D${i}</div><div class="dbg-reg-val" style="font-size:0.65rem">${v}</div></div>`).join('');
+    // Address registers A0–A7
+    const aRegs = s.a.map((v,i) => `<div class="dbg-reg"><div class="dbg-reg-name">A${i}${i===7?' (SP)':''}</div><div class="dbg-reg-val" style="font-size:0.65rem">${v}</div></div>`).join('');
+    // PC + SR
+    const pcSr = `<div class="dbg-reg"><div class="dbg-reg-name">PC</div><div class="dbg-reg-val" style="font-size:0.65rem">${s.pc}</div></div><div class="dbg-reg"><div class="dbg-reg-name">SR</div><div class="dbg-reg-val">${s.sr}</div><div class="dbg-reg-sub">IPL:${s.ipl}</div></div>`;
+    // CCR flags
+    const flags = [
+      ['C','flagC'],['V','flagV'],['Z','flagZ'],['N','flagN'],['X','flagX'],
+      ['S','flagS'],['T','flagT'],
+    ].map(([n,k]) => `<div class="dbg-flag${s[k]?' set':''}">${n} ${s[k]?1:0}</div>`).join('');
+    el.innerHTML = `
+      <div class="dbg-section-label">DATA REGISTERS</div>
+      <div class="dbg-reg-grid-wide">${dRegs}</div>
+      <div class="dbg-section-label">ADDRESS REGISTERS</div>
+      <div class="dbg-reg-grid-wide">${aRegs}</div>
+      <div class="dbg-reg-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0.75rem">${pcSr}</div>
+      <div class="dbg-section-label">STATUS FLAGS</div>
+      <div class="dbg-flags">${flags}</div>`;
+
+  } else if (dbgTab === 'vdp') {
+    el.innerHTML = `
+      <div class="dbg-reg-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="dbg-reg"><div class="dbg-reg-name">H-CNT</div><div class="dbg-reg-val">${s.vHCount}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">V-CNT</div><div class="dbg-reg-val">${s.vVCount}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">MODE</div><div class="dbg-reg-val" style="font-size:0.6rem">${s.vdpMode}</div></div>
+      </div>
+      <div class="dbg-empty" style="padding:0.5rem 0;font-size:0.65rem;color:var(--muted)">
+        Full VDP register dump available once genesis-core.js is implemented.<br>
+        Exposes: Plane A/B scroll, sprite table, DMA state, CRAM palette.
+      </div>`;
+
+  } else if (dbgTab === 'z80') {
+    el.innerHTML = `
+      <div class="dbg-reg-grid">
+        <div class="dbg-reg"><div class="dbg-reg-name">A</div><div class="dbg-reg-val">${s.z80a}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">F</div><div class="dbg-reg-val">${s.z80f}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">B</div><div class="dbg-reg-val">${s.z80b}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">C</div><div class="dbg-reg-val">${s.z80c}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">PC</div><div class="dbg-reg-val">${s.z80pc}</div></div>
+        <div class="dbg-reg"><div class="dbg-reg-name">SP</div><div class="dbg-reg-val">${s.z80sp}</div></div>
+      </div>
+      <div class="dbg-flags">
+        <div class="dbg-flag${s.z80halted?' warn':''}">HALT ${s.z80halted?1:0}</div>
+        <div class="dbg-flag${s.z80busreq?' amber':''}">BUSREQ ${s.z80busreq?1:0}</div>
+        <div class="dbg-flag${s.z80reset?' warn':''}">RESET ${s.z80reset?1:0}</div>
+      </div>`;
+
+  } else if (dbgTab === 'apu') {
+    if (!s.apu) { el.innerHTML='<div class="dbg-empty">No APU data — connect a ROM.</div>'; return; }
+    // Placeholder until genesis-core.js APU diag is implemented
+    el.innerHTML = `<div class="dbg-empty" style="font-size:0.65rem">
+      YM2612 (6 FM channels) + SN76489 PSG (4 channels).<br>
+      Detailed channel state available once genesis-core.js APU is implemented.<br>
+      Audio: <span style="color:${s.muted?'var(--red)':'var(--green)'}">${s.muted?'MUTED':'LIVE'}</span>
+    </div>`;
+
+  } else if (dbgTab === 'log') {
+    if (!eventLog.length) { el.innerHTML='<div class="dbg-log"><div class="dbg-log-empty">No events yet.</div></div>'; return; }
+    el.innerHTML=`<div class="dbg-log">${eventLog.map(e=>`<div class="dbg-log-entry"><span class="dbg-log-time">${e.ts}</span><span class="dbg-log-tag ${e.tag}">${e.tag.toUpperCase()}</span><span class="dbg-log-msg">${e.msg}</span></div>`).join('')}</div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COLLAPSIBLE CARDS
+// ═══════════════════════════════════════════════════════════════
+const CARD_DEFAULTS = {
+  'card-region':   false,
+  'card-controls': false,
+  'card-save':     false,
+  'card-ding':     false,
+  'card-lb':       false,
+};
+
+function cardLoadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('ding-gen-cards') || '{}');
+    Object.entries(CARD_DEFAULTS).forEach(([id, def]) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('collapsed', saved[id] ?? def);
+    });
+  } catch(e) {}
+}
+
+function cardSaveState() {
+  const state = {};
+  Object.keys(CARD_DEFAULTS).forEach(id => {
+    const el = document.getElementById(id); if (el) state[id] = el.classList.contains('collapsed');
+  });
+  try { localStorage.setItem('ding-gen-cards', JSON.stringify(state)); } catch(e) {}
+}
+
+function toggleCard(id) {
+  const el = document.getElementById(id); if (!el) return;
+  el.classList.toggle('collapsed'); cardSaveState();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+cardLoadState();
+renderControlsCard();
+renderAchLive();
+renderLBCard();
+updateSaveCard();
+
+document.getElementById('btn-pause').onclick      = togglePause;
+document.getElementById('btn-reset').onclick      = onReset;
+document.getElementById('btn-mute').onclick       = toggleMute;
+document.getElementById('btn-savestate').onclick  = saveStateToDisk;
+document.getElementById('btn-eject').onclick      = onEject;
+document.getElementById('dbg-toggle').onclick     = toggleDebug;
+document.getElementById('ach-load-btn').onclick   = achLoadManual;
+document.getElementById('ach-tab-config').onclick = () => achTabSwitch('config');
+document.getElementById('ach-tab-live').onclick   = () => achTabSwitch('live');
+
+const ffSpeedEl = document.getElementById('ff-speed');
+ffSpeedEl.value = String(FF_MULTIPLIER);
+ffSpeedEl.addEventListener('change', () => {
+  FF_MULTIPLIER = parseInt(ffSpeedEl.value);
+  localStorage.setItem('ding-gen-ff-speed', ffSpeedEl.value);
+});
+
+// Ping Cockpit on startup in case emulator was loaded after it
+setTimeout(() => { try { channel?.postMessage({ type:'ding:req-game-state' }); } catch(e) {} }, 500);
+// ═══════════════════════════════════════════════════════════════
+// DRAG AND DROP IMPLEMENTATION
+// ═══════════════════════════════════════════════════════════════
+
+// ROM input handling
+document.getElementById('rom-input').onchange = e => {
+  if (e.target.files.length > 0) {
+    loadFile(e.target.files[0]);
+  }
+};
+
+// Click-to-upload functionality
+document.getElementById('canvas-off').addEventListener('click', () => {
+  document.getElementById('rom-input').click();
+});
+
+// Drag and drop functionality
+const canvasOff = document.getElementById('canvas-off');
+const screenWrap = document.getElementById('screen-wrap');
+
+// Prevent default drag behaviors
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+  screenWrap.addEventListener(eventName, preventDefaults, false);
+  canvasOff.addEventListener(eventName, preventDefaults, false);
+});
+
+function preventDefaults(e) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+// Visual feedback during drag
+['dragenter', 'dragover'].forEach(eventName => {
+  canvasOff.addEventListener(eventName, () => {
+    canvasOff.classList.add('drag');
+  }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+  canvasOff.addEventListener(eventName, () => {
+    canvasOff.classList.remove('drag');
+  }, false);
+});
+
+// Handle dropped files
+canvasOff.addEventListener('drop', handleDrop, false);
+
+function handleDrop(e) {
+  const dt = e.dataTransfer;
+  const files = dt.files;
+  
+  if (files.length > 0) {
+    loadFile(files[0]);
+  }
+  
+  canvasOff.classList.remove('drag');
+}
+</script>
+</body>
+</html>
