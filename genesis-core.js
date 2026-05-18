@@ -124,9 +124,10 @@ class GenBus {
     this._padCtrl  = [0x40, 0x40];
     this._padTH    = [1, 1];    // TH line state for each pad
 
-    // Z80 bus signals
+// Z80 bus signals
     this.z80BusReq = false;
     this.z80Reset  = true;
+    this.z80Bank   = 0;      // 15-bit bank register for Z80→68K window
 
     // Subsystem references (set by Genesis class)
     this.vdp  = null;
@@ -189,6 +190,42 @@ class GenBus {
     return v;
   }
 
+  // ── Z80 port access (0x2000–0x7FFF) ──────────────────────
+  readZ80Port(addr) {
+    // YM2612: 0x4000–0x4003
+    if (addr >= 0x4000 && addr <= 0x4003) return this.apu ? this.apu.readYM() : 0xFF;
+    // VDP: 0x7F00–0x7FFF (mirrored)
+    if (addr >= 0x7F00) return this.vdp ? this.vdp.read8(addr & 0x1F) : 0xFF;
+    return 0xFF;
+  }
+
+  writeZ80Port(addr, val) {
+    // YM2612: 0x4000–0x4003
+    if (addr >= 0x4000 && addr <= 0x4003) {
+      if (this.apu) {
+        const bank = (addr >> 1) & 1;
+        if (addr & 1) this.apu.writeYM(bank, this.apu._lastYMReg ?? 0, val);
+        else          this.apu._lastYMReg = val;
+      }
+      return;
+    }
+    // Bank register: 0x6000–0x60FF — serial 9-bit shift register
+    if (addr >= 0x6000 && addr < 0x6100) {
+      this.z80Bank = ((this.z80Bank >> 1) | ((val & 1) << 8)) & 0x1FF;
+      return;
+    }
+    // PSG: 0x7F11 (mirrored)
+    if (addr >= 0x7F00) {
+      if (this.apu) this.apu.writePSG(val);
+      return;
+    }
+    // VDP: 0x7F00–0x7FFF
+    if (addr >= 0x7E00 && addr < 0x7F00) {
+      if (this.vdp) this.vdp.write8(addr & 0x1F, val);
+      return;
+    }
+  }
+
   // ── Size helpers ──────────────────────────────────────────
   readSize(addr, size) {
     if (size === 0) return this.read8(addr);
@@ -219,7 +256,7 @@ class GenBus {
       return this.z80Ram[a24 & 0x1FFF];
     // I/O area
     if (a24 >= 0xA10000 && a24 < 0xA10020) return this._ioRead8(a24);
-    if (a24 === 0xA11100 || a24 === 0xA11101) return this.z80BusReq ? 0x01 : 0x00;
+    if (a24 === 0xA11100 || a24 === 0xA11101) return 0x00; // Z80 bus always immediately granted
     if (a24 === 0xA11200 || a24 === 0xA11201) return this.z80Reset ? 0x00 : 0xFF;
     // VDP
     if (a24 >= 0xC00000 && a24 < 0xC00020) return this.vdp ? this.vdp.read8(a24 & 0x1F) : 0xFF;
@@ -340,34 +377,27 @@ class GenBus {
 // Full instruction set, approximate cycle counts
 // ─────────────────────────────────────────────────────────────
 class M68K {
-constructor(bus) {
-  this.bus = bus;  // Add this line
-  this.vram    = new Uint8Array(0x10000);   // 64 KB
-  this.cram    = new Uint16Array(64);       // 64 × 9-bit palette entries
-  this.vsram   = new Uint16Array(40);       // 40 × 11-bit vertical scroll
-  this.regs    = new Uint8Array(24);        // VDP registers 0–23
-  this.framebuf = new Uint8ClampedArray(GEN_W * GEN_H * 4); // RGBA
+  constructor(bus) {
+    this.bus     = bus;
+    this.d       = new Uint32Array(8);  // D0–D7
+    this.a       = new Uint32Array(8);  // A0–A7
+    this.pc      = 0;
+    this.sr      = 0x2700;              // supervisor, IPL=7
+    this.stopped = false;
+    this._usp    = 0;
+    this.cycles  = 0;
+  }
 
-  // Control port state machine
-  this._ctrlPend  = false;   // true = waiting for second half of control word
-  this._ctrlFirst = 0;
-  this._addrReg   = 0;       // VRAM/CRAM/VSRAM address register
-  this._addrInc   = 2;       // auto-increment (VDP reg 15)
-  this._cdReg     = 0;       // code register (CD bits)
-
-  // Counters
-  this.vcounter   = 0;
-  this.hcounter   = 0;
-  this.vblank     = false;
-  this.hblank     = false;
-  this.dmaActive  = false;
-  this.frame      = 0;
-
-  // Pending FIFO (simplified)
-  this._readBuffer = 0;
-
-  this._fillFramebuf();
-}
+  reset() {
+    this.d.fill(0);
+    this.a.fill(0);
+    this.a[7]    = this.bus.read32(0);  // SSP from vector table
+    this.pc      = this.bus.read32(4);  // PC  from vector table
+    this.sr      = 0x2700;
+    this.stopped = false;
+    this._usp    = 0;
+    this.cycles  = 0;
+  }
 
 
   // ── Sign extension ──────────────────────────────────────────
@@ -572,7 +602,9 @@ constructor(bus) {
     this.a[7] = (this.a[7] - 2) >>> 0;
     this.bus.write16(this.a[7], this.sr & 0xFFFF);
     this.sr = (this.sr | 0x2000) & ~0x8000; // enter supervisor, clear trace
-    this.pc = this.bus.read32((vector * 4) >>> 0) >>> 0;
+if (this.bus._logEvent) this.bus._logEvent('irq', 
+    `EXCEPTION vec=${vector} PC=0x${((this.pc-2)>>>0).toString(16).toUpperCase()} op=0x${this.bus.read16((this.pc-2)>>>0).toString(16).toUpperCase()}`);  
+   this.pc = this.bus.read32((vector * 4) >>> 0) >>> 0;
     this.cycles += 34;
   }
 
@@ -851,13 +883,13 @@ constructor(bus) {
           // MOVEM.W registers → memory
           this._movemToMem(op, mode, reg, 1); return;
         }
-        if (sz === 3) { // EXT.L Dn or MOVEM.W mem → regs
+if (sz === 3) { // EXT.L Dn or MOVEM.L reg→mem
           if (mode === 0) { // EXT.L
             this.d[reg] = this.sext16(this.d[reg] & 0xFFFF) >>> 0;
             this.setNZVC(this.d[reg], 2); this.cycles += 4; return;
           }
-          // MOVEM.W memory → registers
-          this._movemFromMem(op, mode, reg, 1); return;
+          // MOVEM.L registers → memory
+          this._movemToMem(op, mode, reg, 2); return;
         }
         break;
       }
@@ -928,9 +960,16 @@ constructor(bus) {
       else     this._usp = this.a[reg]; // An → USP
       this.cycles += 4; return;
     }
-    switch (lo8) {
-      case 0x70: this.stopped = true; this.pc = (this.pc + 2) >>> 0; this.cycles += 4; return;  // RESET (stub)
-      case 0x71: this.stopped = true; this.fetch16(); this.cycles += 4; return;                   // STOP
+switch (lo8) {
+      case 0x70: this.cycles += 132; return;  // RESET — pulses bus reset, CPU continues
+      case 0x71: this.cycles += 4; return;    // NOP (0x4E71)
+      case 0x72: {                            // STOP #imm — load SR, halt until interrupt
+        const imm = this.fetch16();
+        this.sr = imm & 0xA71F;
+        this.stopped = true;
+        this.cycles += 4;
+        return;
+      }
       case 0x73: { // RTE
         this.sr = this.bus.read16(this.a[7]) & 0xA71F;
         this.a[7] = (this.a[7] + 2) >>> 0;
@@ -1064,32 +1103,29 @@ constructor(bus) {
     }
   }
 
-  // ── Group 6 : BRA / BSR / Bcc ─────────────────────────────────
+// ── Group 6 : BRA / BSR / Bcc ─────────────────────────────────
   _g6(op) {
-    const cc   = (op >> 8) & 0xF;
-    let   disp = this.sext8(op & 0xFF);
-    if (disp === 0) { disp = this.sext16(this.fetch16()); }
+    const cc       = (op >> 8) & 0xF;
+    const byteField = op & 0xFF;
+    let   disp     = this.sext8(byteField);
+    if (byteField === 0) { disp = this.sext16(this.fetch16()); }
 
-    if (cc === 1) { // BSR
-      const retPC = this.pc;
-      this.pc = (this.pc - (disp === 0 ? 0 : 0) + disp) >>> 0; // already consumed
-      // Actually: branch target is (PC_of_opcode + 2) + disp for word disp
-      // but we've already advanced PC past opcode word (and disp word if used)
-      // Simpler: target = (opPC+2)+disp for byte; (opPC+2+2)+disp for word
-      // Since PC is already past extension word:
+    // After fetching all extension words, this.pc == return address.
+    // M68K branch target = (opcode_addr + 2) + disp.
+    // For byte disp: this.pc = opcode_addr + 2, so target = this.pc + disp.
+    // For word disp: this.pc = opcode_addr + 4, so target = this.pc - 2 + disp.
+    const adj    = byteField === 0 ? -2 : 0;
+    const target = (this.pc + adj + disp) >>> 0;
+
+    if (cc === 1) { // BSR — push return address, jump to target
       this.a[7] = (this.a[7] - 4) >>> 0;
-      this.bus.write32(this.a[7], this.pc);
-      this.pc = (this.pc + disp - (op&0xFF ? 0 : 0)) >>> 0;
-      // Re-compute properly: savedPC=this.pc (after extension), target=savedPC+disp
-      // Revert and redo
-      const savedPC = this.pc;
-      this.pc = (savedPC + disp) >>> 0;
-      this.bus.write32(this.a[7], savedPC);
+      this.bus.write32(this.a[7], this.pc); // return addr = pc past extension words
+      this.pc = target;
       this.cycles += 18; return;
     }
 
     if (cc === 0 || this.testCC(cc)) { // BRA or taken Bcc
-      this.pc = (this.pc + disp) >>> 0;
+      this.pc = target;
       this.cycles += 10;
     } else {
       this.cycles += 8;
@@ -1455,10 +1491,13 @@ class GenVDP {
     this.cram    = new Uint16Array(64);       // 64 × 9-bit palette entries
     this.vsram   = new Uint16Array(40);       // 40 × 11-bit vertical scroll
     this.regs    = new Uint8Array(24);        // VDP registers 0–23
-    this.framebuf = new Uint8ClampedArray(GEN_W * GEN_H * 4); // RGBA
+    this.framebuf = new Uint8ClampedArray(GEN_W * 240 * 4); // RGBA — 240 covers both PAL (240) and NTSC (224)
 
-    // Control port state machine
-    this._ctrlPend  = false;   // true = waiting for second half of control word
+ // Control port state machine
+    // Byte and word writes have independent pending state — a byte write
+    // mid-sequence must not corrupt a pending word-command and vice versa.
+    this._ctrlPendWord = false;  // waiting for 2nd word of address/DMA command
+    this._ctrlPendByte = false;  // waiting for 2nd byte of a byte-write reg command
     this._ctrlFirst = 0;
     this._addrReg   = 0;       // VRAM/CRAM/VSRAM address register
     this._addrInc   = 2;       // auto-increment (VDP reg 15)
@@ -1469,279 +1508,210 @@ class GenVDP {
     this.hcounter   = 0;
     this.vblank     = false;
     this.hblank     = false;
-    this.dmaActive  = false;
+this.dmaActive  = false;
     this.frame      = 0;
+    this._isPAL     = false;
+    this._vintPending = false;  // F flag — VBlank interrupt pending
 
-    // Pending FIFO (simplified)
+ // Pending FIFO (simplified)
     this._readBuffer = 0;
+    this._dmaFillData = 0;  // last word written to data port (used by VRAM fill)
+    this._diagDmaCount = 0; // diagnostic: total DMA operations fired
+	this._dmaFillPending = false;
+this._vramDirty = false;
 
     this._fillFramebuf();
   }
 
 
-  _fillFramebuf() {
-    // Clear to black
+_fillFramebuf() {
     this.framebuf.fill(0);
-    
-    // Render background layer if enabled
-    if (this.regs[1] & 0x40) {
-      this._renderBackground();
-    }
-    
-    // Render sprites if enabled
-    if (this.regs[1] & 0x40) {
-      this._renderSprites();
+    if (!(this.regs[1] & 0x40)) return;
+    for (let y = 0; y < GEN_H; y++) this._renderScanline(y);
+  }
+
+  _renderScanline(y) {
+    this._renderPlaneLine(true,  y); // Plane B (back)
+    this._renderPlaneLine(false, y); // Plane A (front)
+    this._renderSpriteLine(y);
+  }
+
+  _renderPlaneLine(isB, y) {
+    const hsize = [32, 64, 0, 128][ this.regs[16]       & 3];
+    const vsize = [32, 64, 0, 128][(this.regs[16] >> 4) & 3];
+    if (!hsize || !vsize) return;
+
+    const planeBase   = isB ? (this.regs[4] & 0x07) << 13 : (this.regs[2] & 0x38) << 10;
+    const hscBase     = (this.regs[13] & 0x3F) << 10;
+    const hscMode     = this.regs[11] & 0x03;
+    const hscPlaneOff = isB ? 2 : 0;
+
+    const hscOff  = hscMode === 3 ? y * 4 : hscMode === 2 ? (y >> 3) * 4 : 0;
+    const hscAddr = (hscBase + hscOff + hscPlaneOff) & 0xFFFF;
+    const hscroll = (0x400 - ((this.vram[hscAddr] << 8) | this.vram[hscAddr + 1])) & 0x3FF;
+    const vscroll = (isB ? this.vsram[1] : this.vsram[0]) & 0x3FF;
+
+    const scrollY = (y + vscroll) & (vsize * 8 - 1);
+    const tileRow = scrollY >> 3;
+    const fineY   = scrollY & 7;
+
+    for (let x = 0; x < GEN_W; x++) {
+      const scrollX = (x + hscroll) & (hsize * 8 - 1);
+      const tileCol = scrollX >> 3;
+      const fineX   = scrollX & 7;
+
+      const ntAddr  = (planeBase + ((tileRow & (vsize - 1)) * hsize + (tileCol & (hsize - 1))) * 2) & 0xFFFF;
+      const entry   = (this.vram[ntAddr] << 8) | this.vram[ntAddr + 1];
+      const tileIdx = entry & 0x7FF;
+      const palLine = (entry >> 13) & 3;
+      const row     = (entry >> 12) & 1 ? (7 - fineY) : fineY; // vFlip
+      const col     = (entry >> 11) & 1 ? (7 - fineX) : fineX; // hFlip
+
+      const byteAddr = (tileIdx * 32 + row * 4 + (col >> 1)) & 0xFFFF;
+      const nibble   = (col & 1) ? (this.vram[byteAddr] & 0xF) : ((this.vram[byteAddr] >> 4) & 0xF);
+      if (nibble === 0) continue;
+
+      const rgb = this._decodeCRAMColor(this.cram[(palLine * 16 + nibble) & 0x3F]);
+      const pi  = (y * GEN_W + x) * 4;
+      this.framebuf[pi]     = rgb.r;
+      this.framebuf[pi + 1] = rgb.g;
+      this.framebuf[pi + 2] = rgb.b;
+      this.framebuf[pi + 3] = 255;
     }
   }
 
-  _renderBackground() {
-    const ctrlReg1 = this.regs[1];
-    const nameTableBase = ((this.regs[2] & 0x38) << 10);
-    const patternBase = ((this.regs[4] & 0x07) << 11);
-    
-    const hScrollMask = this.regs[11] & 0x03;
-    const vScrollMask = this.regs[11] & 0x04 ? 0x7 : 0;
-    
-    const hScrollData = this.vsram[0] & 0x3FF;
-    const vScrollData = this.vsram[1] & 0x3FF;
-    
-    for (let y = 0; y < GEN_H; y++) {
-      const row = (y + vScrollData) >> 3;
-      const pixelRow = (y + vScrollData) & 7;
-      
-      for (let x = 0; x < GEN_W; x += 8) {
-        const col = (x + hScrollData) >> 3;
-        
-        // Calculate name table address
-        const nameAddr = nameTableBase + ((row & 0x1F) << 6) + ((col & 0x3F) << 1);
-        if (nameAddr + 1 >= this.vram.length) continue;
-        
-        const nameEntry = (this.vram[nameAddr] << 8) | this.vram[nameAddr + 1];
-        const patternIndex = nameEntry & 0x7FF;
-        const paletteLine = (nameEntry >> 13) & 3;
-        const priority = (nameEntry >> 15) & 1;
-        const hFlip = (nameEntry >> 11) & 1;
-        const vFlip = (nameEntry >> 12) & 1;
-        
-        // Calculate pattern address
-        const patternAddr = patternBase + (patternIndex * 32) + (pixelRow * 4);
-        if (patternAddr + 3 >= this.vram.length) continue;
-        
-        // Read pattern data
-        const patternLow = this.vram[patternAddr];
-        const patternHigh = this.vram[patternAddr + 1];
-        const patternLow2 = this.vram[patternAddr + 2];
-        const patternHigh2 = this.vram[patternAddr + 3];
-        
-        // Render 8 pixels
-        for (let px = 0; px < 8; px++) {
-          const pixelX = hFlip ? (7 - px) : px;
-          const pixelY = vFlip ? (7 - pixelRow) : pixelRow;
-          
-          // Extract pixel color index
-          let colorIndex = 0;
-          if (pixelX < 4) {
-            colorIndex = ((patternLow >> (pixelX * 2)) & 3) | (((patternHigh >> (pixelX * 2)) & 3) << 2);
-          } else {
-            const pxOffset = pixelX - 4;
-            colorIndex = ((patternLow2 >> (pxOffset * 2)) & 3) | (((patternHigh2 >> (pxOffset * 2)) & 3) << 2);
-          }
-          
-          // Only draw if not transparent (color index 0)
-          if (colorIndex !== 0) {
-            const screenX = x + px;
-            const screenY = y;
-            if (screenX < GEN_W && screenY < GEN_H) {
-              const paletteIndex = (paletteLine * 16) + colorIndex;
-              if (paletteIndex < this.cram.length) {
-                const color = this.cram[paletteIndex];
-                const rgb = this._decodeCRAMColor(color);
-                const pixelIndex = (screenY * GEN_W + screenX) * 4;
-                this.framebuf[pixelIndex + 0] = rgb.r;
-                this.framebuf[pixelIndex + 1] = rgb.g;
-                this.framebuf[pixelIndex + 2] = rgb.b;
-                this.framebuf[pixelIndex + 3] = 255; // Alpha
-              }
-  
-  switch (dmaMode) {
-    case 0: // Memory copy (68K RAM → VRAM/CRAM/VSRAM)
-      this._dmaMemoryCopy(srcAddr, dmaLen, cd);
-      break;
-    case 1: // VRAM fill
-      this._dmaVRAMFill(dmaLen, cd);
-      break;
-    case 2: // VRAM copy (VRAM → VRAM)
-      this._dmaVRAMCopy(dmaLen, cd);
-      break;
-    case 3: // Link DMA (unsupported in original hardware)
-      break;
+  // ── DMA engine ─────────────────────────────────────────────
+  _writeByCD(addr, val, dst) {
+    const d = dst & 0xF;
+    if      (d === 1) this.vram[(addr) & 0xFFFF] = val;
+    else if (d === 3) this.cram[(addr >> 1) & 0x3F] = val;
+    else if (d === 5) this.vsram[(addr >> 1) & 0x27] = val;
   }
-  
-  // Update DMA length register to 0 after completion
-  this.regs[19] = 0;
-  this.regs[20] = 0;
-}
+
+_processDMA(cd) {
+    const dmaMode = (this.regs[23] >> 6) & 3;
+    const rawLen  = (this.regs[20] << 8) | this.regs[19];
+    const dmaLen  = rawLen === 0 ? 0x10000 : rawLen;
+    const srcAddr = ((this.regs[23] & 0x7F) << 17) | (this.regs[22] << 9) | (this.regs[21] << 1);
+    switch (dmaMode) {
+      case 0: case 1: this._dmaMemoryCopy(srcAddr, dmaLen, cd); break;
+      case 2: this._dmaVRAMFill(dmaLen, cd); break;
+      case 3: this._dmaVRAMCopy(srcAddr, dmaLen, cd); break;
+    }
+    this.regs[19] = 0; this.regs[20] = 0;
+    this._diagDmaCount++;
+  }
 
 _dmaMemoryCopy(srcAddr, len, cd) {
-  const destAddr = this._addrReg;
-  const inc = this._addrInc;
-  
-  for (let i = 0; i < len; i++) {
-    // Read from 68K bus
-    const val = this.bus.read8((srcAddr + i) & 0xFFFFFF);
-    
-    // Write to destination based on CD bits
-    if ((cd & 0x0F) === 1) { // VRAM
-      this.vram[destAddr & 0xFFFF] = val;
-    } else if ((cd & 0x0F) === 3) { // CRAM
-      if ((destAddr & 1) === 0) {
-        this.cram[(destAddr >> 1) & 0x3F] = val;
-      } else {
-        this.cram[(destAddr >> 1) & 0x3F] |= (val << 8);
-      }
-    } else if ((cd & 0x0F) === 5) { // VSRAM
-      if ((destAddr & 1) === 0) {
-        this.vsram[(destAddr >> 1) & 0x27] = val;
-      } else {
-        this.vsram[(destAddr >> 1) & 0x27] |= (val << 8);
-      }
+    // DMA transfers are 16-bit words; len is word count
+    const d = cd & 0xF;
+    const inc = this._addrInc;
+    for (let i = 0; i < len; i++) {
+      const hi  = this.bus.read8(srcAddr & 0xFFFFFF);
+      const lo  = this.bus.read8((srcAddr + 1) & 0xFFFFFF);
+      const word = (hi << 8) | lo;
+      const addr = this._addrReg & 0xFFFF;
+      if      (d === 1) { this.vram[addr] = hi; this.vram[(addr+1) & 0xFFFF] = lo; }
+      else if (d === 3) { this.cram[(addr >> 1) & 0x3F] = word; }
+      else if (d === 5) { this.vsram[(addr >> 1) & 0x27] = word; }
+      srcAddr = (srcAddr + 2) & 0xFFFFFF;
+      this._addrReg = (this._addrReg + inc) & 0xFFFF;
     }
-    
-    // Update addresses
-    srcAddr = (srcAddr + 1) & 0xFFFFFF;
-    this._addrReg = (this._addrReg + inc) & 0xFFFF;
   }
-}
 
 _dmaVRAMFill(len, cd) {
-  const fillVal = this._readData() & 0xFF; // Get fill value from data port
-  const destAddr = this._addrReg;
-  const inc = this._addrInc;
-  
-  for (let i = 0; i < len; i++) {
-    if ((cd & 0x0F) === 1) { // VRAM fill
-      this.vram[destAddr & 0xFFFF] = fillVal;
-    }
-    this._addrReg = (this._addrReg + inc) & 0xFFFF;
-  }
-}
-
-_dmaVRAMCopy(len, cd) {
-  const srcAddr = ((this.regs[23] & 0x7F) << 8) | this.regs[22]; // Source in VRAM
-  const destAddr = this._addrReg;
-  const inc = this._addrInc;
-  
-  for (let i = 0; i < len; i++) {
-    if ((cd & 0x0F) === 1) { // VRAM to VRAM copy
-      const val = this.vram[srcAddr & 0xFFFF];
-      this.vram[destAddr & 0xFFFF] = val;
-    }
-    srcAddr = (srcAddr + 1) & 0xFFFF;
-    this._addrReg = (this._addrReg + inc) & 0xFFFF;
-  }
-}
-  _processDMA(cd) {
-    const dmaMode = (this.regs[1] >> 6) & 3;  // DMA mode from register 1
-    const dmaLen = (this.regs[20] << 8) | this.regs[19];  // DMA length
-    let srcAddr = ((this.regs[23] & 0x7F) << 24) | (this.regs[22] << 16) | 
-                  ((this.regs[21] & 0xFF) << 8) | (this.regs[20] & 0xFF); // Source address
-    
-    switch (dmaMode) {
-      case 0: // Memory copy (68K RAM → VRAM/CRAM/VSRAM)
-        this._dmaMemoryCopy(srcAddr, dmaLen, cd);
-        break;
-      case 1: // VRAM fill
-        this._dmaVRAMFill(dmaLen, cd);
-        break;
-      case 2: // VRAM copy (VRAM → VRAM)
-        this._dmaVRAMCopy(dmaLen, cd);
-        break;
-      case 3: // Link DMA (unsupported in original hardware)
-        break;
-    }
-    
-    // Update DMA length register to 0 after completion
-    this.regs[19] = 0;
-    this.regs[20] = 0;
-  }
-
-  _dmaMemoryCopy(srcAddr, len, cd) {
-    const destAddr = this._addrReg;
+    // Fill value = high byte of last data port write (Genesis hardware behavior)
+    const fillVal = (this._dmaFillData >> 8) & 0xFF;
     const inc = this._addrInc;
-    
     for (let i = 0; i < len; i++) {
-      // Read from 68K bus
-      const val = this.bus.read8(srcAddr & 0xFFFFFF);
-      
-      // Write to destination based on CD bits
-      if ((cd & 0x0F) === 1) { // VRAM
-        this.vram[destAddr & 0xFFFF] = val;
-      } else if ((cd & 0x0F) === 3) { // CRAM
-        if ((destAddr & 1) === 0) {
-          this.cram[(destAddr >> 1) & 0x3F] = val;
-        } else {
-          this.cram[(destAddr >> 1) & 0x3F] |= (val << 8);
-        }
-      } else if ((cd & 0x0F) === 5) { // VSRAM
-        if ((destAddr & 1) === 0) {
-          this.vsram[(destAddr >> 1) & 0x27] = val;
-        } else {
-          this.vsram[(destAddr >> 1) & 0x27] |= (val << 8);
-        }
-      }
-      
-      // Update addresses
-      srcAddr = (srcAddr + 1) & 0xFFFFFF;
-      this._addrReg = (this._addrReg + inc) & 0xFFFF;
-    }
-  }
-
-  _dmaVRAMFill(len, cd) {
-    const fillVal = this._readData() & 0xFF; // Get fill value from data port
-    const destAddr = this._addrReg;
-    const inc = this._addrInc;
-    
-    for (let i = 0; i < len; i++) {
-      if ((cd & 0x0F) === 1) { // VRAM fill
-        this.vram[destAddr & 0xFFFF] = fillVal;
-      }
-      this._addrReg = (this._addrReg + inc) & 0xFFFF;
+      const addr = this._addrReg & 0xFFFF;
+      this.vram[addr] = fillVal;
+      this._addrReg = (addr + inc) & 0xFFFF;
     }
   }
 
   _dmaVRAMCopy(len, cd) {
-    let srcAddr = ((this.regs[23] & 0x7F) << 8) | this.regs[22]; // Source in VRAM
-    const destAddr = this._addrReg;
+    let src = ((this.regs[23] & 0x7F) << 8) | this.regs[22];
     const inc = this._addrInc;
-    
     for (let i = 0; i < len; i++) {
-      if ((cd & 0x0F) === 1) { // VRAM to VRAM copy
-        const val = this.vram[srcAddr & 0xFFFF];
-        this.vram[destAddr & 0xFFFF] = val;
-      }
-      srcAddr = (srcAddr + 1) & 0xFFFF;
+      this._writeByCD(this._addrReg, this.vram[src & 0xFFFF], cd);
+      src = (src + 1) & 0xFFFF;
       this._addrReg = (this._addrReg + inc) & 0xFFFF;
     }
   }
 
-  // Add this to support DMA operations
   _readDMAData() {
-    const cd = this._cdReg & 0xF;
-    const addr = this._addrReg & 0xFFFF;
-    if (cd === 1) return this.vram[addr];  // VRAM
-    if (cd === 3) return this.cram[(addr >> 1) & 0x3F];  // CRAM
-    if (cd === 5) return this.vsram[(addr >> 1) & 0x27]; // VSRAM
+    const cd = this._cdReg & 0xF, addr = this._addrReg & 0xFFFF;
+    if (cd === 1) return this.vram[addr];
+    if (cd === 3) return this.cram[(addr >> 1) & 0x3F];
+    if (cd === 5) return this.vsram[(addr >> 1) & 0x27];
     return 0;
   }
 
-  _writeDMAData(val) {
-    const cd = this._cdReg & 0xF;
-    const addr = this._addrReg & 0xFFFF;
-    if (cd === 1) this.vram[addr] = val;  // VRAM
-    else if (cd === 3) this.cram[(addr >> 1) & 0x3F] = val;  // CRAM
-    else if (cd === 5) this.vsram[(addr >> 1) & 0x27] = val; // VSRAM
-  }
+  _writeDMAData(val) { this._writeByCD(this._addrReg, val, this._cdReg); }
 
+ _renderSprites() {
+    // Sprite attribute table base (reg 5, bits 6-0, << 9)
+    const sprBase  = (this.regs[5] & 0x7F) << 9;
+    const h40      = this.regs[12] & 1;
+    const maxSpr   = h40 ? 80 : 64;
+
+    // Walk the link chain to build ordered sprite list
+    const sprites = [];
+    let link = 0;
+    for (let n = 0; n < maxSpr; n++) {
+      const base = (sprBase + link * 8) & 0xFFFF;
+      const yraw = ((this.vram[base] << 8) | this.vram[base + 1]) & 0x3FF;
+      const sz   = this.vram[base + 2];
+      link       = this.vram[base + 3] & 0x7F;
+      const attr = (this.vram[base + 4] << 8) | this.vram[base + 5];
+      const xraw = ((this.vram[base + 6] << 8) | this.vram[base + 7]) & 0x1FF;
+
+      sprites.push({
+        x: xraw - 128,
+        y: yraw - 128,
+        hCells: ((sz >> 2) & 3) + 1,
+        vCells: (sz & 3) + 1,
+        attr,
+      });
+      if (link === 0) break;
+    }
+
+    // Draw back-to-front so sprite 0 ends up on top
+    for (let si = sprites.length - 1; si >= 0; si--) {
+      const { x: sx, y: sy, hCells, vCells, attr } = sprites[si];
+      const tileIdx = attr & 0x7FF;
+      const palLine = (attr >> 13) & 3;
+      const vFlip   = (attr >> 12) & 1;
+      const hFlip   = (attr >> 11) & 1;
+
+      for (let cy = 0; cy < vCells; cy++) {
+        for (let cx = 0; cx < hCells; cx++) {
+          // Genesis sprite tile order: column-major (top→bottom within each column)
+          const tile = (tileIdx + cx * vCells + cy) & 0x7FF;
+
+          for (let row = 0; row < 8; row++) {
+            const screenY = sy + cy * 8 + (vFlip ? (7 - row) : row);
+            if (screenY < 0 || screenY >= GEN_H) continue;
+
+            for (let col = 0; col < 8; col++) {
+              const screenX = sx + cx * 8 + (hFlip ? (7 - col) : col);
+              if (screenX < 0 || screenX >= GEN_W) continue;
+
+              const r = vFlip ? (7 - row) : row;
+              const c = hFlip ? (7 - col) : col;
+
+              // 4bpp decode: high nibble = left pixel, low nibble = right pixel
+              const byteAddr = (tile * 32 + r * 4 + (c >> 1)) & 0xFFFF;
+              const nibble   = (c & 1) ? (this.vram[byteAddr] & 0xF) : ((this.vram[byteAddr] >> 4) & 0xF);
+              if (nibble === 0) continue;
+
+              const rgb = this._decodeCRAMColor(this.cram[(palLine * 16 + nibble) & 0x3F]);
+              const pi  = (screenY * GEN_W + screenX) * 4;
+              this.framebuf[pi]     = rgb.r;
+              this.framebuf[pi + 1] = rgb.g;
+              this.framebuf[pi + 2] = rgb.b;
+              this.framebuf[pi + 3] = 255;
             }
           }
         }
@@ -1749,105 +1719,53 @@ _dmaVRAMCopy(len, cd) {
     }
   }
 
-  _renderSprites() {
-    const spriteTableBase = (this.regs[5] & 0x7F) << 9;
-    const maxSprites = this.regs[12] & 0x80 ? 80 : 64;
-    
-    // Process up to maxSprites
-    for (let i = 0; i < maxSprites; i++) {
-      const spriteAddr = spriteTableBase + (i * 8);
-      if (spriteAddr + 7 >= this.vram.length) break;
-      
-      // Read sprite attributes
-      const ypos = this.vram[spriteAddr] << 8 | this.vram[spriteAddr + 1];
-      const xpos = this.vram[spriteAddr + 6] << 8 | this.vram[spriteAddr + 7];
-      const patternIndex = this.vram[spriteAddr + 2] << 8 | this.vram[spriteAddr + 3];
-      const sizeLink = this.vram[spriteAddr + 4] << 8 | this.vram[spriteAddr + 5];
-      
-      const height = (sizeLink & 0x0300) >> 8;
-      const width = sizeLink & 0x03;
-      const link = (sizeLink >> 8) & 0x7F;
-      const paletteLine = (patternIndex >> 13) & 3;
-      const priority = (patternIndex >> 15) & 1;
-      const hFlip = (patternIndex >> 11) & 1;
-      const vFlip = (patternIndex >> 12) & 1;
-      
-      const spriteHeight = (height + 1) * 8;
-      const spriteWidth = (width + 1) * 8;
-      
-      // Adjust position (sprites are positioned relative to line 0)
-      const yPosAdjusted = ypos & 0x1FF;
-      const xPosAdjusted = xpos & 0x1FF;
-      
-      // Skip if off-screen
-      if (yPosAdjusted >= 0x200 - spriteHeight || xPosAdjusted >= 0x200 - spriteWidth) continue;
-      
-      // Render sprite
-      for (let sy = 0; sy < spriteHeight; sy++) {
-        for (let sx = 0; sx < spriteWidth; sx++) {
-          const pixelX = hFlip ? (spriteWidth - 1 - sx) : sx;
-          const pixelY = vFlip ? (spriteHeight - 1 - sy) : sy;
-          
-          // Calculate which tile this pixel belongs to
-          const tileX = pixelX >> 3;
-          const tileY = pixelY >> 3;
-          const pixelInTileX = pixelX & 7;
-          const pixelInTileY = pixelY & 7;
-          
-          // Calculate pattern index for this tile
-          const tilesPerRow = width + 1;
-          const tileIndex = tileY * tilesPerRow + tileX;
-          const tilePatternIndex = (patternIndex & 0x7FF) + tileIndex;
-          
-          // Calculate pattern address
-          const patternBase = (this.regs[6] & 0x07) << 11;
-          const patternAddr = patternBase + (tilePatternIndex * 32) + (pixelInTileY * 4);
-          
-          if (patternAddr + 3 < this.vram.length) {
-            // Read pattern data
-            const patternLow = this.vram[patternAddr];
-            const patternHigh = this.vram[patternAddr + 1];
-            const patternLow2 = this.vram[patternAddr + 2];
-            const patternHigh2 = this.vram[patternAddr + 3];
-            
-            // Extract pixel color index
-            let colorIndex = 0;
-            if (pixelInTileX < 4) {
-              colorIndex = ((patternLow >> (pixelInTileX * 2)) & 3) | (((patternHigh >> (pixelInTileX * 2)) & 3) << 2);
-            } else {
-              const pxOffset = pixelInTileX - 4;
-              colorIndex = ((patternLow2 >> (pxOffset * 2)) & 3) | (((patternHigh2 >> (pxOffset * 2)) & 3) << 2);
-            }
-            
-            // Only draw if not transparent
-            if (colorIndex !== 0) {
-              const screenX = xPosAdjusted + sx;
-              const screenY = yPosAdjusted + sy;
-              
-              if (screenX >= 0 && screenX < GEN_W && screenY >= 0 && screenY < GEN_H) {
-                const paletteIndex = (paletteLine * 16) + colorIndex;
-                if (paletteIndex < this.cram.length) {
-                  const color = this.cram[paletteIndex];
-                  const rgb = this._decodeCRAMColor(color);
-                  const pixelIndex = (screenY * GEN_W + screenX) * 4;
-                  this.framebuf[pixelIndex + 0] = rgb.r;
-                  this.framebuf[pixelIndex + 1] = rgb.g;
-                  this.framebuf[pixelIndex + 2] = rgb.b;
-                  this.framebuf[pixelIndex + 3] = 255; // Alpha
-                }
+  _renderSpriteLine(y) {
+    const sprBase = (this.regs[5] & 0x7F) << 9;
+    const maxSpr  = (this.regs[12] & 1) ? 80 : 64;
 
+    // Walk link chain to collect visible sprites
+    const sprites = [];
+    let link = 0;
+    for (let n = 0; n < maxSpr; n++) {
+      const base = (sprBase + link * 8) & 0xFFFF;
+      const yraw = ((this.vram[base] << 8) | this.vram[base + 1]) & 0x3FF;
+      const sz   = this.vram[base + 2];
+      link       = this.vram[base + 3] & 0x7F;
+      const attr = (this.vram[base + 4] << 8) | this.vram[base + 5];
+      const xraw = ((this.vram[base + 6] << 8) | this.vram[base + 7]) & 0x1FF;
+      const sy   = yraw - 128;
+      const vCells = (sz & 3) + 1;
+      if (y >= sy && y < sy + vCells * 8)
+        sprites.push({ x: xraw - 128, sy, hCells: ((sz >> 2) & 3) + 1, vCells, attr });
+      if (link === 0) break;
+    }
 
-_writeDMAData(val) {
-  const cd = this._cdReg & 0xF;
-  const addr = this._addrReg & 0xFFFF;
-  if (cd === 1) this.vram[addr] = val;  // VRAM
-  else if (cd === 3) this.cram[(addr >> 1) & 0x3F] = val;  // CRAM
-  else if (cd === 5) this.vsram[(addr >> 1) & 0x27] = val; // VSRAM
-}
+    // Draw back-to-front so sprite 0 wins
+    for (let si = sprites.length - 1; si >= 0; si--) {
+      const { x: sx, sy, hCells, vCells, attr } = sprites[si];
+      const tileIdx = attr & 0x7FF;
+      const palLine = (attr >> 13) & 3;
+      const vFlip   = (attr >> 12) & 1;
+      const hFlip   = (attr >> 11) & 1;
+      const localY  = y - sy;
+      const cy      = vFlip ? (vCells - 1 - (localY >> 3)) : (localY >> 3);
+      const row     = vFlip ? (7 - (localY & 7)) : (localY & 7);
 
-              }
-            }
-          }
+      for (let cx = 0; cx < hCells; cx++) {
+        const tile = (tileIdx + cx * vCells + cy) & 0x7FF;
+        for (let col = 0; col < 8; col++) {
+          const screenX = sx + cx * 8 + (hFlip ? (7 - col) : col);
+          if (screenX < 0 || screenX >= GEN_W) continue;
+          const c        = hFlip ? (7 - col) : col;
+          const byteAddr = (tile * 32 + row * 4 + (c >> 1)) & 0xFFFF;
+          const nibble   = (c & 1) ? (this.vram[byteAddr] & 0xF) : ((this.vram[byteAddr] >> 4) & 0xF);
+          if (nibble === 0) continue;
+          const rgb = this._decodeCRAMColor(this.cram[(palLine * 16 + nibble) & 0x3F]);
+          const pi  = (y * GEN_W + screenX) * 4;
+          this.framebuf[pi]     = rgb.r;
+          this.framebuf[pi + 1] = rgb.g;
+          this.framebuf[pi + 2] = rgb.b;
+          this.framebuf[pi + 3] = 255;
         }
       }
     }
@@ -1869,14 +1787,14 @@ _writeDMAData(val) {
     this.hblank  = false;
     // Render the line
     this._renderLine(line);
-    return (line === activeLines); // fire VBLANK at first inactive line
+    const doVBlank = (line === activeLines);
+    if (doVBlank) this._vintPending = true; // set F flag
+    return doVBlank;
   }
 
-  _renderLine(line) {
-    // For now, just re-render whole frame every line (inefficient but works)
-    if (line === 0) {
-      this._fillFramebuf();
-    }
+_renderLine(line) {
+    if (line === 0) this.framebuf.fill(0); // clear at frame start
+    if (line < GEN_H && (this.regs[1] & 0x40)) this._renderScanline(line);
   }
 
   // Returns true when HBlank interrupt should fire (level 4)
@@ -1899,11 +1817,16 @@ _writeDMAData(val) {
 
   read16(off) {
     off &= 0x1F;
-    switch (off & 0xFE) {
-      case 0x00: // Data port
+ switch (off & 0xFE) {
+      case 0x00:
+      case 0x02: // Data port (0xC00000-0xC00003)
         return this._readData();
-      case 0x04: // Control port — status register
-        return this._status();
+      case 0x04:
+      case 0x06: { // Control port (0xC00004-0xC00007)
+        const s = this._status();
+        this._vintPending = false;
+        return s;
+      }
       case 0x08: // H/V counter
         return ((this.hcounter>>1)&0xFF) | (this.vcounter<<8);
       default: return 0xFFFF;
@@ -1912,62 +1835,71 @@ _writeDMAData(val) {
 
   write8(off, val) {
     off &= 0x1F;
-    if (off < 2) { // Data port — byte write: write to high or low byte
+    if (off < 2) { // Data port
       if (off & 1) this._writeData(val);
       else         this._writeData(val << 8);
-    } else if (off < 6) { // Control port byte
+    } else if (off < 8) { // Control port bytes (0xC00004-0xC00007)
       this._writeCtrl(val & 0xFF, true);
     }
   }
 
-  write16(off, val) {
+ write16(off, val) {
     off &= 0x1F;
     switch (off & 0xFE) {
-      case 0x00: this._writeData(val); break;
-      case 0x04: this._writeCtrl(val, false); break;
+      case 0x00:
+      case 0x02: this._writeData(val); break;    // 0xC00000 and 0xC00002 both data port
+      case 0x04:
+      case 0x06: this._writeCtrl(val, false); break;  // 0xC00004 and 0xC00006 both ctrl port
     }
   }
 
-  _status() {
-    // Bit 9 = FIFO full, 8 = FIFO empty, 7 = VBlank, 6 = HBlank, 3 = DMA
+_status() {
+    // Bit 9=FIFO full, 8=FIFO empty, 7=F(VBlank pending), 3=VBlank, 2=HBlank, 1=DMA, 0=PAL
     return 0x0200 // FIFO never full
          | 0x0100 // FIFO always empty
+         | (this._vintPending ? 0x0080 : 0) // F flag — games poll this for VSync
          | (this.vblank ? 0x0008 : 0)
          | (this.hblank ? 0x0004 : 0)
-         | (this.dmaActive ? 0x0002 : 0);
+         | (this.dmaActive ? 0x0002 : 0)
+         | (this._isPAL ? 0x0001 : 0);
   }
 
-  _writeCtrl(val, isByte) {
+ _writeCtrl(val, isByte) {
     if (isByte) {
-      // Byte writes to control port: interpret as register write 0x8R 0xVV
-      if (!this._ctrlPend) { this._ctrlFirst = val; this._ctrlPend = true; return; }
+      // Byte writes: two consecutive bytes form a register write word (0x8R 0xVV)
+      // This path is independent of the word-write pending state.
+      if (!this._ctrlPendByte) { this._ctrlFirst = val; this._ctrlPendByte = true; return; }
       const w = (this._ctrlFirst << 8) | val;
-      this._ctrlPend = false;
+      this._ctrlPendByte = false;
       this._processCtrlWord(w); return;
     }
-    if (this._ctrlPend) {
+    // Word write path
+    if (this._ctrlPendWord) {
       // Second word of address/DMA command
       const w2 = val;
       const w1 = this._ctrlFirst;
-      this._ctrlPend = false;
-      // Full command: bits from first+second word
-      // CD5..2 from w2 bits 7..4, CD1..0 from w1 bits 15..14
-      // Address: w1 bits 13..0 + w2 bits 1..0 (high address bits)
-      const cd  = ((w1 >> 14) & 3) | ((w2 & 0xF0) >> 2);
-      const addr = ((w1 & 0x3FFF) | ((w2 & 0x03) << 14));
+      this._ctrlPendWord = false;
+      // CD5..2 from w2 bits 7..4; CD1..0 from w1 bits 15..14
+      // Address: w1 bits 13..0 | w2 bits 1..0 (high two address bits)
+      const cd   = ((w1 >> 14) & 3) | ((w2 & 0xF0) >> 2);
+      const addr = (w1 & 0x3FFF) | ((w2 & 0x03) << 14);
       this._cdReg   = cd;
       this._addrReg = addr;
-      // Check for DMA
-      if (cd & 0x20) { /* DMA trigger */
-  this._processDMA(cd);
-  this.dmaActive = false;
-}
-
-      return;
+ if (cd & 0x20) {
+    const dmaMode = (this.regs[23] >> 6) & 3;
+    if (dmaMode === 2) {
+        // VRAM fill: hold state, fire on next data port write
+        this._dmaFillPending = true;
+    } else {
+        this._processDMA(cd);
+        this.dmaActive = false;
     }
-    // First word of two-word command, or register write
+}
+ return;
+    }
+    // First word: register write or first half of address command
     if ((val & 0xC000) === 0x8000) {
-      // Register write: 10 RRRRR VVVVVVVV
+      // Register write: 1000 RRRR RRVV VVVV  (bits 13..8 = reg, 7..0 = val)
       const r = (val >> 8) & 0x1F;
       const v = val & 0xFF;
       if (r < 24) {
@@ -1976,9 +1908,9 @@ _writeDMAData(val) {
       }
       return;
     }
-    // First half of address command
-    this._ctrlFirst = val;
-    this._ctrlPend  = true;
+    // First half of two-word address/DMA command
+    this._ctrlFirst    = val;
+    this._ctrlPendWord = true;
   }
 
   _processCtrlWord(w) {
@@ -1988,27 +1920,33 @@ _writeDMAData(val) {
     }
   }
 
-  _writeData(val) {
-    const cd = this._cdReg & 0xF;
-    const addr = this._addrReg & 0xFFFF;
-    if (cd === 1) { // VRAM write
-      this.vram[addr & 0xFFFF] = (val >> 8) & 0xFF;
-      this.vram[(addr+1) & 0xFFFF] = val & 0xFF;
-    } else if (cd === 3) { // CRAM write
-      this.cram[(addr >> 1) & 0x3F] = val;
-    } else if (cd === 5) { // VSRAM write
-      this.vsram[(addr >> 1) & 0x27] = val;
-    }
-    this._addrReg = (this._addrReg + this._addrInc) & 0xFFFF;
-  }
+_writeData(val) {
+    this._dmaFillData = val;
 
-  _readData() {
-    const cd   = (this._cdReg >> 4) & 0xF;
+    // VRAM fill DMA fires on first data write after control setup
+    if (this._dmaFillPending) {
+        this._dmaFillPending = false;
+        this._processDMA(this._cdReg);
+        this.dmaActive = false;
+        return;
+    }
+
+    const cd   = this._cdReg & 0xF;
+    const addr = this._addrReg & 0xFFFF;
+    if      (cd === 1) { this.vram[addr & 0xFFFF] = (val >> 8) & 0xFF; this.vram[(addr+1) & 0xFFFF] = val & 0xFF; }
+    else if (cd === 3) { this.cram[(addr >> 1) & 0x3F] = val; }
+    else if (cd === 5) { this.vsram[(addr >> 1) & 0x27] = val; }
+    this._addrReg = (this._addrReg + this._addrInc) & 0xFFFF;
+    this._vramDirty = true;
+}
+
+_readData() {
+    const cd   = this._cdReg & 0xF;
     const addr = this._addrReg & 0xFFFF;
     let val = 0;
-    if (cd === 0) val = (this.vram[addr]<<8)|this.vram[(addr+1)&0xFFFF]; // VRAM
-    else if (cd === 1) val = this.cram[(addr>>1)&0x3F];                   // CRAM
-    else if (cd === 2) val = this.vsram[(addr>>1)&0x27];                  // VSRAM
+    if      (cd === 0x0) val = (this.vram[addr]<<8)|this.vram[(addr+1)&0xFFFF]; // VRAM read
+    else if (cd === 0x8) val = this.cram[(addr>>1)&0x3F];                        // CRAM read
+    else if (cd === 0x4) val = this.vsram[(addr>>1)&0x27];                       // VSRAM read
     this._addrReg = (this._addrReg + this._addrInc) & 0xFFFF;
     return val;
   }
@@ -2174,7 +2112,6 @@ class GenZ80 {
       
       // Unimplemented opcodes - just consume cycles
       default:
-        console.warn(`Unimplemented Z80 opcode: 0x${opcode.toString(16).padStart(2, '0')}`);
         this.cycles += 4;
         break;
     }
@@ -2363,7 +2300,7 @@ class Genesis {
   constructor() {
     this.bus  = new GenBus();
     this.vdp = new GenVDP(this.bus);
-    this.z80  = new GenZ80();
+    this.z80  = new GenZ80(this.bus);
     this.apu  = new GenAPU();
     this.cpu  = new M68K(this.bus);
 
@@ -2372,6 +2309,7 @@ class Genesis {
     this.bus.z80  = this.z80;
     this.bus.apu  = this.apu;
     this.bus.m68k = this.cpu;
+	this.bus._logEvent = null; // wired from frontend
 
     // Hook VDP port writes for YM2612 (at 0xA00000-range, routed by bus stubs)
     // YM2612 lives at 0xA04000-0xA04003
@@ -2412,8 +2350,9 @@ class Genesis {
     this.vdp.frame = 0;
   }
 
-  setRegion(region) {
+setRegion(region) {
     this._isPAL = (region === 'PAL');
+    this.vdp._isPAL = this._isPAL;
     if (this._isPAL) {
       this._linesFrame  = PAL_LINES;
       this._activeLines = PAL_ACTIVE;
@@ -2467,10 +2406,10 @@ class Genesis {
         pc: this.cpu.pc, sr: this.cpu.sr,
         stopped: this.cpu.stopped, usp: this.cpu._usp,
       },
-      z80: {
-        a:this.z80.a, f:this.z80.f, b:this.z80.b, c:this.z80.c,
-        d:this.z80.d, e:this.z80.e, h:this.z80.h, l:this.z80.l,
-        pc:this.z80.pc, sp:this.z80.sp,
+z80: {
+        a:this.z80.A, f:this.z80.F, b:this.z80.B, c:this.z80.C,
+        d:this.z80.D, e:this.z80.E, h:this.z80.H, l:this.z80.L,
+        pc:this.z80.PC, sp:this.z80.SP,
         ram: Array.from(this.z80.ram),
       },
       wram: Array.from(this.bus.wram),
@@ -2491,8 +2430,9 @@ class Genesis {
       this.cpu.stopped = !!s.cpu.stopped;
       this.cpu._usp    = s.cpu.usp >>> 0;
     }
-    if (s.z80) {
-      ['a','f','b','c','d','e','h','l','pc','sp'].forEach(k => { if(s.z80[k]!==undefined) this.z80[k]=s.z80[k]; });
+if (s.z80) {
+      const zm = {a:'A',f:'F',b:'B',c:'C',d:'D',e:'E',h:'H',l:'L',pc:'PC',sp:'SP'};
+      Object.entries(zm).forEach(([k,K]) => { if(s.z80[k]!==undefined) this.z80[K]=s.z80[k]; });
       if (s.z80.ram) this.z80.ram.set(new Uint8Array(s.z80.ram));
     }
     if (s.wram) this.bus.wram.set(new Uint8Array(s.wram));
