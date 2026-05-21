@@ -1,4 +1,5 @@
 build/
+build-wasm/
 *.o
 *.a
 *.wasm

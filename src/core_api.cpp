@@ -58,10 +58,11 @@ static constexpr u32 REGION_COUNT = 3;
 static constexpr u32 SAVE_MAX = 256u * 1024u;
 
 // =============================================================================
-// Public API — all functions are extern "C" so the linker and Emscripten see
-// plain C symbol names (no C++ name mangling).
+// Public API implementations
+// ding_core.h already wraps all declarations in extern "C" { }.
+// Repeating that here causes C2733 on MSVC ("cannot overload extern C function").
+// C linkage is inherited from the header declaration — no block needed here.
 // =============================================================================
-extern "C" {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
@@ -298,5 +299,3 @@ DING_EXPORT void ding_diag_last_error(char* out, u32 size) {
 DING_EXPORT ding_bool ding_is_disc_swap_pending() {
     return DING_FALSE;   // cartridge system
 }
-
-}  // extern "C"
