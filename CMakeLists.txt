@@ -95,11 +95,18 @@ else()
     target_include_directories(genesis-core PRIVATE ${GENESIS_INCLUDES})
 
     if(MSVC)
-        target_compile_options(genesis-core PRIVATE /W3 /O2)
+        # /O2 and /RTC1 (added by CMake's Debug config) are mutually exclusive.
+        # Use a generator expression so /O2 only fires in Release/RelWithDebInfo.
+        target_compile_options(genesis-core PRIVATE
+            /W3
+            $<$<NOT:$<CONFIG:Debug>>:/O2>
+        )
         # Export all extern "C" symbols automatically on Windows
         set_target_properties(genesis-core PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     else()
-        target_compile_options(genesis-core PRIVATE -Wall -Wextra -O2)
+        target_compile_options(genesis-core PRIVATE -Wall -Wextra
+            $<$<NOT:$<CONFIG:Debug>>:-O2>
+        )
     endif()
 
     # ── Headless test harness (native only) ───────────────────────────────────
@@ -113,9 +120,11 @@ else()
         )
         target_include_directories(genesis-harness PRIVATE ${GENESIS_INCLUDES})
         if(MSVC)
-            target_compile_options(genesis-harness PRIVATE /W3 /O2)
+            target_compile_options(genesis-harness PRIVATE /W3
+                $<$<NOT:$<CONFIG:Debug>>:/O2>)
         else()
-            target_compile_options(genesis-harness PRIVATE -Wall -Wextra -O2)
+            target_compile_options(genesis-harness PRIVATE -Wall -Wextra
+                $<$<NOT:$<CONFIG:Debug>>:-O2>)
         endif()
     endif()
 endif()
