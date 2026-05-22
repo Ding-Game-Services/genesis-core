@@ -217,7 +217,9 @@ bool Genesis::saveState(u8* buf, u32 bufSize, u32* outSize) {
     rb.isPAL=isPAL?1u:0u; rb.overshoot=overshoot;
     ding_save_write_block(&w, "REGION", &rb, sizeof(rb));
 
-    ding_save_writer_finish(&w, outSize);
+    size_t finishSize = 0;
+ding_save_writer_finish(&w, &finishSize);
+if (outSize) *outSize = static_cast<u32>(finishSize);
     return true;
 }
 
