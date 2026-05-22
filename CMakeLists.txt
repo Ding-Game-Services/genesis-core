@@ -76,6 +76,8 @@ if(EMSCRIPTEN)
         "_ding_sram_dirty"
         "_ding_sram_clear_dirty"
         "_ding_write8"
+        "_malloc"
+        "_free"
     )
 
     # Convert to the JSON-array string Emscripten expects.
@@ -92,7 +94,7 @@ if(EMSCRIPTEN)
         -sMODULARIZE=1
         -sEXPORT_NAME=GenesisCore
         "-sEXPORTED_FUNCTIONS=${EXPORTED_FUNCTIONS_STR}"
-        "-sEXPORTED_RUNTIME_METHODS=[ccall,cwrap,getValue,setValue]"
+        "-sEXPORTED_RUNTIME_METHODS=[ccall,cwrap,getValue,setValue,HEAPU8]"
         --no-entry
     )
     # Output: genesis-core.js + genesis-core.wasm (Emscripten convention)
