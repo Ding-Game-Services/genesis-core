@@ -67,6 +67,15 @@ if(EMSCRIPTEN)
         "_ding_has_error"
         "_ding_diag_last_error"
         "_ding_is_disc_swap_pending"
+        "_ding_set_region"
+        "_ding_get_wram"
+        "_ding_get_wram_size"
+        "_ding_get_sram"
+        "_ding_get_sram_size"
+        "_ding_sram_has"
+        "_ding_sram_dirty"
+        "_ding_sram_clear_dirty"
+        "_ding_write8"
     )
 
     # Convert to the JSON-array string Emscripten expects.

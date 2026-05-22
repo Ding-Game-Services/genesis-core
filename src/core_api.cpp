@@ -90,6 +90,11 @@ DING_EXPORT void ding_swap_disc(DingDiscImage* /*disc*/) {
     // No-op
 }
 
+DING_EXPORT void ding_set_region(const char* region) {
+    if (!s_gen || !region) return;
+    s_gen->setRegion(region[0] == 'P' || region[0] == 'p');
+}
+
 DING_EXPORT void ding_run_frame() {
     if (s_gen) s_gen->runFrame();
 }
@@ -120,7 +125,9 @@ DING_EXPORT const DingSaveStateInfo* ding_get_savestate_info() {
 }
 
 DING_EXPORT u32 ding_get_memory_region_count() {
-    return REGION_COUNT;
+    u32 n = REGION_COUNT;
+    if (s_gen && s_gen->bus.hasSRAM && s_gen->bus.sramSize > 0) n++;
+    return n;
 }
 
 DING_EXPORT void ding_get_memory_region(u32 index, DingMemoryRegion* out) {
@@ -144,13 +151,21 @@ DING_EXPORT void ding_get_memory_region(u32 index, DingMemoryRegion* out) {
             out->access = DING_MEM_DIRECT;
             out->writable = 1;
             break;
-        case 2:
+case 2:
             out->name = "VRAM";
             out->base_addr = 0x000000u;
             out->size = GEN_VRAM_SIZE;
             out->ptr = s_gen->vdp.vram;
             out->access = DING_MEM_DIRECT;
             out->writable = 0;
+            break;
+        case 3:
+            out->name = "SRAM";
+            out->base_addr = 0x200000u;
+            out->size = s_gen->bus.sramSize;
+            out->ptr = s_gen->bus.sramData;
+            out->access = DING_MEM_DIRECT;
+            out->writable = 1;
             break;
     }
 }
@@ -223,6 +238,18 @@ DING_EXPORT size_t ding_diag_video_state(char* buf, size_t size) {
 DING_EXPORT u8 ding_has_error() {
     return (s_gen && s_gen->errorFlag) ? 1 : 0;
 }
+
+// ── Memory/SRAM helpers for JS frontend ──────────────────────────────────────
+extern "C" {
+DING_EXPORT u8*  ding_get_wram()          { return s_gen ? s_gen->bus.wram : nullptr; }
+DING_EXPORT u32  ding_get_wram_size()     { return GEN_WRAM_SIZE; }
+DING_EXPORT u8*  ding_get_sram()          { return (s_gen && s_gen->bus.hasSRAM) ? s_gen->bus.sramData : nullptr; }
+DING_EXPORT u32  ding_get_sram_size()     { return (s_gen && s_gen->bus.hasSRAM) ? s_gen->bus.sramSize : 0u; }
+DING_EXPORT u8   ding_sram_has()          { return (s_gen && s_gen->bus.hasSRAM && s_gen->bus.sramSize > 0) ? 1 : 0; }
+DING_EXPORT u8   ding_sram_dirty()        { return (s_gen && s_gen->bus.sramDirty) ? 1 : 0; }
+DING_EXPORT void ding_sram_clear_dirty()  { if (s_gen) s_gen->bus.sramDirty = false; }
+DING_EXPORT void ding_write8(u32 addr, u8 val) { if (s_gen) s_gen->bus.write8(addr, val); }
+} // extern "C"
 
 DING_EXPORT const char* ding_diag_last_error() {
     return (s_gen && s_gen->errorFlag) ? s_gen->errorMsg : nullptr;
