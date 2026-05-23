@@ -13,6 +13,10 @@
 #  define DING_EXPORT
 #endif
 
+// All exported symbols must have C linkage so Emscripten can find them
+// by name via ccall/cwrap without C++ name mangling.
+extern "C" {
+
 static Genesis* s_gen = nullptr;
 
 // SDK pattern: The SDK expects pointers to static data for capabilities
@@ -96,7 +100,21 @@ DING_EXPORT void ding_set_region(const char* region) {
 }
 
 DING_EXPORT void ding_run_frame() {
-    if (s_gen) s_gen->runFrame();
+    if (!s_gen) return;
+    s_gen->runFrame();
+
+    static int dbgCount = 0;
+    if (++dbgCount == 60) {
+        char buf[1024];
+        s_gen->diagCPU(buf, sizeof(buf));
+        printf("%s\n", buf);
+
+        // What instruction is at the stuck PC?
+        u16 w0 = s_gen->bus.read16(0x1208);
+        u16 w1 = s_gen->bus.read16(0x120A);
+        u16 w2 = s_gen->bus.read16(0x120C);
+        printf("insn @ 1208: %04X %04X %04X\n", w0, w1, w2);
+    }
 }
 
 DING_EXPORT const DingCoreInfo* ding_get_core_info() {
@@ -240,7 +258,6 @@ DING_EXPORT u8 ding_has_error() {
 }
 
 // ── Memory/SRAM helpers for JS frontend ──────────────────────────────────────
-extern "C" {
 DING_EXPORT u8*  ding_get_wram()          { return s_gen ? s_gen->bus.wram : nullptr; }
 DING_EXPORT u32  ding_get_wram_size()     { return GEN_WRAM_SIZE; }
 DING_EXPORT u8*  ding_get_sram()          { return (s_gen && s_gen->bus.hasSRAM) ? s_gen->bus.sramData : nullptr; }
@@ -249,8 +266,9 @@ DING_EXPORT u8   ding_sram_has()          { return (s_gen && s_gen->bus.hasSRAM 
 DING_EXPORT u8   ding_sram_dirty()        { return (s_gen && s_gen->bus.sramDirty) ? 1 : 0; }
 DING_EXPORT void ding_sram_clear_dirty()  { if (s_gen) s_gen->bus.sramDirty = false; }
 DING_EXPORT void ding_write8(u32 addr, u8 val) { if (s_gen) s_gen->bus.write8(addr, val); }
-} // extern "C"
 
 DING_EXPORT const char* ding_diag_last_error() {
     return (s_gen && s_gen->errorFlag) ? s_gen->errorMsg : nullptr;
 }
+
+} // extern "C"

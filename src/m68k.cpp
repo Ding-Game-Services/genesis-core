@@ -441,16 +441,25 @@ void M68K::_g4(u16 op) {
             sr = static_cast<u16>((sr & ~0x0Fu) | 0x04u);
             cycles+=4; return;
         }
-        case 0x4: {
-            if (sz == 3) { sr=static_cast<u16>(fetch16()&0xA71Fu); cycles+=20; return; } // MOVE #→SR
-            const u32 r = doSub(readEA(mode,reg,sz), 0u, sz, false);      // NEG
-            writeEA(mode,reg,r,sz); cycles+=6; return;
-        }
-        case 0x6: {
-            if (sz == 3) { sr=static_cast<u16>(fetch16()&0xA71Fu); cycles+=20; return; } // MOVE #→SR
-            const u32 v = ~readEA(mode,reg,sz);                             // NOT
-            writeEA(mode,reg,v,sz); setNZVC(v,sz); cycles+=4; return;
-        }
+case 0x4: {
+    if (sz == 3) {
+        // MOVE EA→CCR: only update lower 5 bits (condition codes), leave SR intact
+        const u32 v = readEA(mode, reg, 1);
+        sr = static_cast<u16>((sr & ~0x1Fu) | (v & 0x1Fu));
+        cycles += 20; return;
+    }
+    const u32 r = doSub(readEA(mode,reg,sz), 0u, sz, false);   // NEG
+    writeEA(mode,reg,r,sz); cycles+=6; return;
+}
+case 0x6: {
+    if (sz == 3) {
+        // MOVE EA→SR: full SR write, use readEA to handle all addressing modes
+        sr = static_cast<u16>(readEA(mode, reg, 1) & 0xA71Fu);
+        cycles += 20; return;
+    }
+    const u32 v = ~readEA(mode,reg,sz);   // NOT
+    writeEA(mode,reg,v,sz); setNZVC(v,sz); cycles+=4; return;
+}
         case 0x8: {
             if (sz == 0) {                                                  // NBCD
                 const u32 v=readEA(mode,reg,0), x=(sr>>4)&1u;
