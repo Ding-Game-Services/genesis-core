@@ -333,7 +333,7 @@ bool GenVDP::tickLine(u32 line, bool pal) {
 bool GenVDP::checkHInt(u32 line, bool pal) {
     if (!(regs[0] & 0x10u)) return false;   // HInt disabled in reg 0 bit 4
     const u32 activeH = pal ? PAL_ACTIVE : NTSC_ACTIVE;
-    if (line > activeH) return false;
+    if (line >= activeH) return false;
     const u32 cnt = regs[10];
     return (line % (cnt + 1u)) == 0u;
 }
