@@ -379,11 +379,19 @@ void M68K::_g0(u16 op) {
 
 void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*dstReg*/) {
     switch (b11_8) {
-        case 0x0: { const u16 i=static_cast<u16>(fetch16()); if(op&0x40u) sr|=i&0x1Fu; else sr|=i&0xA71Fu;              cycles+=20; break; } // ORI CCR/SR
-        case 0x2: { const u16 i=static_cast<u16>(fetch16()); if(op&0x40u) sr=static_cast<u16>((sr&~0x1Fu)|(i&0x1Fu)); else sr&=i&0xA71Fu; cycles+=20; break; } // ANDI CCR/SR
-        case 0xA: { const u16 i=static_cast<u16>(fetch16()); if(op&0x40u) sr^=i&0x1Fu; else sr^=i&0xA71Fu;             cycles+=20; break; } // EORI CCR/SR
-        default: break;
-    }
+case 0x0: { const u16 i=static_cast<u16>(fetch16());
+    if(op&0x40u) sr=static_cast<u16>(sr | (i & 0xA71Fu));           // ORI to SR
+    else         sr=static_cast<u16>(sr | (i & 0x1Fu));             // ORI to CCR
+    cycles+=20; break; }
+case 0x2: { const u16 i=static_cast<u16>(fetch16());
+    if(op&0x40u) sr=static_cast<u16>(sr & (i & 0xA71Fu));           // ANDI to SR
+    else         sr=static_cast<u16>((sr & ~0x1Fu) | (i & 0x1Fu));  // ANDI to CCR
+    cycles+=20; break; }
+case 0xA: { const u16 i=static_cast<u16>(fetch16());
+    if(op&0x40u) sr=static_cast<u16>(sr ^ (i & 0xA71Fu));           // EORI to SR
+    else         sr=static_cast<u16>(sr ^ (i & 0x1Fu));             // EORI to CCR
+    cycles+=20; break; }            cycles+=20; break; } // EORI CCR/SR
+    
 }
 
 void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
