@@ -282,25 +282,29 @@ bool M68K::interrupt(u32 level) {
 void M68K::step() {
     if (stopped) { cycles += 4; return; }
     const u16 op = fetch16();
+    
+    // The high nibble (bits 15-12) determines the Instruction Group
     switch ((op >> 12) & 0xFu) {
-        case 0x0: _g0(op);        break;
-        case 0x1: _gMOVE(op, 0);  break;  // MOVE.B
-        case 0x2: _gMOVE(op, 2);  break;  // MOVE.L
-        case 0x3: _gMOVE(op, 1);  break;  // MOVE.W
-        case 0x4: _g4(op);        break;
-        case 0x5: _g5(op);        break;
-        case 0x6: _g6(op);        break;
-        case 0x7: _g7(op);        break;
-        case 0x8: _g8(op);        break;
-        case 0x9: _g9(op);        break;
-        case 0xA: exception(10);  break;  // A-line
-        case 0xB: _gB(op);        break;
-        case 0xC: _gC(op);        break;
-        case 0xD: _gD(op);        break;
-        case 0xE: _gE(op);        break;
-        case 0xF: exception(11);  break;  // F-line
+        case 0x0: _g0(op);        break; // Bit Ops / Immediate
+        case 0x1: _gMOVE(op);     break; // MOVE (Size is encoded inside op)
+        case 0x2: _gD(op);        break; // ADD / ADDA / ADDX
+        case 0x3: _g9(op);        break; // SUB / SUBA / SUBX
+        case 0x4: _g4(op);        break; // Misc / LEA / MOVEM
+        case 0x5: _g5(op);        break; // ADDQ / SUBQ / Scc
+        case 0x6: _g6(op);        break; // BRA / BSR / Bcc
+        case 0x7: _g7(op);        break; // MOVEQ
+        case 0x8: _g8(op);        break; // OR / DIV / SBCD
+        case 0x9: _g9(op);        break; // SUB / SUBA / SUBX (some encodings)
+        case 0xA: exception(10);  break; // A-line
+        case 0xB: _gB(op);        break; // CMP / EOR
+        case 0xC: _gC(op);        break; // AND / MUL / EXG
+        case 0xD: _gD(op);        break; // ADD / ADDA / ADDX (some encodings)
+        case 0xE: _gE(op);        break; // Shifts / Rotates
+        case 0xF: exception(11);  break; // F-line
+        default:  exception(11);  break;
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Group 0: Bit ops / Immediate ops / MOVEP
@@ -390,7 +394,7 @@ case 0x2: { const u16 i=static_cast<u16>(fetch16());
 case 0xA: { const u16 i=static_cast<u16>(fetch16());
     if(op&0x40u) sr=static_cast<u16>(sr ^ (i & 0xA71Fu));           // EORI to SR
     else         sr=static_cast<u16>(sr ^ (i & 0x1Fu));             // EORI to CCR
-    cycles+=20; break; }            cycles+=20; break; } // EORI CCR/SR
+    cycles+=20; break; }
     
 }
 
@@ -411,11 +415,18 @@ void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Groups 1/2/3: MOVE / MOVEA
 // ─────────────────────────────────────────────────────────────────────────────
-void M68K::_gMOVE(u16 op, u32 sz) {
-    const u32 srcMode = (op >> 3) & 7u, srcReg = op & 7u;
-    const u32 dstReg  = (op >> 9) & 7u, dstMode = (op >> 6) & 7u;
-    const u32 val     = readEA(srcMode, srcReg, sz);
-    if (dstMode == 1) {
+void M68K::_gMOVE(u16 op) {
+    // Correct M68K MOVE decoding:
+    // Bits 11-9: dstMode, Bits 8-6: dstReg, Bits 5-4: size, Bits 3-0: srcMode/Reg
+    const u32 srcMode = (op >> 3) & 7u; 
+    const u32 srcReg  = op & 7u;
+    const u32 dstReg  = (op >> 6) & 7u;
+    const u32 dstMode = (op >> 9) & 7u;
+    const u32 sz      = (op >> 4) & 3u; // Size: 0=B, 1=W, 2=L
+
+    const u32 val = readEA(srcMode, srcReg, sz);
+
+    if (dstMode == 1) { // MOVEA: Always treats value as a 32-bit address
         a[dstReg] = sz == 1 ? static_cast<u32>(sext16(val & 0xFFFFu)) : val;
     } else {
         writeEA(dstMode, dstReg, val, sz);
@@ -423,6 +434,7 @@ void M68K::_gMOVE(u16 op, u32 sz) {
     }
     cycles += 4;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Group 4: Miscellaneous
