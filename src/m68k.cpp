@@ -383,34 +383,53 @@ void M68K::_g0(u16 op) {
 
 void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*dstReg*/) {
     switch (b11_8) {
-case 0x0: { const u16 i=static_cast<u16>(fetch16());
-    if(op&0x40u) sr=static_cast<u16>(sr | (i & 0xA71Fu));           // ORI to SR
-    else         sr=static_cast<u16>(sr | (i & 0x1Fu));             // ORI to CCR
-    cycles+=20; break; }
-case 0x2: { const u16 i=static_cast<u16>(fetch16());
-    if(op&0x40u) sr=static_cast<u16>(sr & (i & 0xA71Fu));           // ANDI to SR
-    else         sr=static_cast<u16>((sr & ~0x1Fu) | (i & 0x1Fu));  // ANDI to CCR
-    cycles+=20; break; }
-case 0xA: { const u16 i=static_cast<u16>(fetch16());
-    if(op&0x40u) sr=static_cast<u16>(sr ^ (i & 0xA71Fu));           // EORI to SR
-    else         sr=static_cast<u16>(sr ^ (i & 0x1Fu));             // EORI to CCR
-    cycles+=20; break; }
-    
-}
+        case 0x0: { 
+            const u16 i = static_cast<u16>(fetch16());
+            if(op & 0x40u) sr = static_cast<u16>(sr | (i & 0xA71Fu)); 
+            else           sr = static_cast<u16>(sr | (i & 0x1Fu)); 
+            cycles += 20; 
+            break; 
+        }
+        case 0x2: { 
+            const u16 i = static_cast<u16>(fetch16());
+            if(op & 0x40u) sr = static_cast<u16>(sr & (i & 0xA71Fu)); 
+            else           sr = static_cast<u16>((sr & ~0x1Fu) | (i & 0x1Fu)); 
+            cycles += 20; 
+            break; 
+        }
+        case 0xA: { 
+            const u16 i = static_cast<u16>(fetch16());
+            if(op & 0x40u) sr = static_cast<u16>(sr ^ (i & 0xA71Fu)); 
+            else           sr = static_cast<u16>(sr ^ (i & 0x1Fu)); 
+            cycles += 20; 
+            break; 
+        }
+    } // This closes the switch
+} // This closes the function
 
 void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
-    const u32  mask   = 1u << num;
+    const u32 mask = 1u << num;
     const bool bitSet = (v & mask) != 0u;
-    sr = static_cast<u16>((sr & ~0x04u) | (bitSet ? 0u : 0x04u));
-    if (typ == 0) return;   // BTST
+    
+    // Update Condition Codes (Z and N)
+    // Z = 1 if bit is 0; N = 1 if bit is 1
+    u16 ns = sr & ~0x0Cu;
+    if (!bitSet) ns |= 0x04u; // Set Z
+    if (bitSet)  ns |= 0x08u; // Set N
+    sr = ns;
+
+    if (typ == 0) return; // BTST: Just test the bit, don't write back
+
     u32 nv;
     switch (typ) {
-        case 1: nv = v ^  mask; break;  // BCHG
-        case 2: nv = v & ~mask; break;  // BCLR
-        default:nv = v |  mask; break;  // BSET
+        case 1: nv = v ^ mask; break;  // BCHG (Change/Toggle)
+        case 2: nv = v & ~mask; break; // BCLR (Clear)
+        default: nv = v | mask; break; // BSET (Set)
     }
-    writeEA(mode, reg, nv, 0);
+    
+    writeEA(mode, reg, nv, 0); // Write the modified byte back to memory/register
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Groups 1/2/3: MOVE / MOVEA

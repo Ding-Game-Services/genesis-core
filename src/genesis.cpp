@@ -104,35 +104,24 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // After all scanlines: push audio samples into the ring buffer.
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
-    for (u32 line = 0; line < linesFrame; line++) {
-        // M68K: run for (cpl - overshoot) cycles; save overshoot for next line
-        const s32 target   = static_cast<s32>(cpl) - overshoot;
-        const u32 runCycles = (target > 0) ? static_cast<u32>(target) : 0u;
-        overshoot = static_cast<s32>(cpu.run(runCycles));
+    // 1. Run the CPU
+    const u32 cyclesPerFrame = 73728; 
+    cpu.run(cyclesPerFrame);
 
-        // Z80: co-runs at its own clock ratio when 68K doesn't own the bus
-        if (!bus.z80BusReq && !bus.z80Reset) {
-            z80.run(z80cpl);
-        }
-
-        // VDP line tick — renders the line and returns true on VBlank entry
-        const bool doVBlank = vdp.tickLine(line, isPAL);
-        if (doVBlank) {
-            vdp.frame++;
-            // VBlank interrupt — level 6, enabled by VDP reg 1 bit 5
-            if (vdp.regs[1] & 0x20u) cpu.interrupt(6);
-        }
-
-        // HBlank interrupt — level 4, enabled by VDP reg 0 bit 4
-        if (vdp.checkHInt(line, isPAL)) cpu.interrupt(4);
+    // 2. Update the VDP (Render the screen)
+    const u32 activeLines = isPAL ? GEN_H_PAL : GEN_H_NTSC;
+    for (u32 line = 0; line < activeLines; line++) {
+        vdp.tickLine(line, isPAL);
     }
 
-    // Push audio samples for this frame into the ring buffer.
-    // Frontend reads from the buffer at its own pace (Web Audio / SDL callback).
-    // NTSC: 44100/60 ≈ 735  PAL: 44100/50 = 882
+    // 3. Update the APU (Generate audio samples)
     const u32 samplesPerFrame = GEN_AUDIO_RATE / (isPAL ? 50u : 60u);
     apu.generateFrame(samplesPerFrame);
+
+    // 4. Increment frame counter
+    frame++;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Save state

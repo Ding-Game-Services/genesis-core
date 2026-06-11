@@ -173,8 +173,8 @@ private:
     bool testCC (u32 cc);
     void _g0(u16 op);
     void _g0Special(u16 op, u32 b11_8, u32 srcMode, u32 srcReg, u32 dstReg);
-    void _doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v);
-    void _gMOVE(u16 op, u32 sz);
+	void _doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v);
+    void _gMOVE(u16 op);
     void _g4(u16 op);
     void _g4E(u16 op, u32 mode, u32 reg, u32 sz);
     void _movemToMem  (u16 op, u32 mode, u32 reg, u32 sz);
@@ -287,10 +287,11 @@ class Genesis {
 public:
     GenBus bus;
     GenVDP vdp;
+    u32 frame = 0;
+    bool isPAL = false;	
     GenZ80 z80;
     GenAPU apu;
     M68K   cpu;
-    bool isPAL;
     u32  linesFrame, activeLines, cpl, z80cpl;
     s32  overshoot;
     bool errorFlag;
