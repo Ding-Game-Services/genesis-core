@@ -52,7 +52,24 @@ void GenBus::reset() {
 //   0x1B8–0x1BB  SRAM end address
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::loadROM(const u8* data, u32 size) {
-    rom.assign(data, data + size);
+    // Check for Sega Header (first 512 bytes)
+    // A real header usually starts with a specific pattern or has a 
+    // valid ROM ID at 0x100.
+    bool hasHeader = false;
+    if (size >= 0x200) {
+        // Check for the "SEGA" string or specific header markers
+        // Most common: address 0x100 contains the console name
+        if (data[0x100] == 'S' && data[0x101] == 'e' && data[0x102] == 'g') {
+            hasHeader = true;
+        }
+    }
+
+    if (hasHeader) {
+        // Skip the 512-byte header for the main ROM array
+        rom.assign(data + 0x200, data + size);
+    } else {
+        rom.assign(data, data + size);
+    }
 
     hasSRAM   = false;
     sramDirty = false;
@@ -61,27 +78,28 @@ void GenBus::loadROM(const u8* data, u32 size) {
     sramSize  = 0;
     std::memset(sramData, 0, sizeof(sramData));
 
+    // Use the original data pointer for SRAM header check to avoid offset confusion
     if (size >= 0x1C0) {
-        const u8 b0 = rom[0x1B0];
-        const u8 b1 = rom[0x1B1];
-        const u8 ty = rom[0x1B2];
+        const u8 b0 = data[0x1B0];
+        const u8 b1 = data[0x1B1];
+        const u8 ty = data[0x1B2];
         if (b0 == 0x52 && b1 == 0x41 && (ty & 0xA0) == 0xA0) {
             hasSRAM = true;
-            sramStart = (static_cast<u32>(rom[0x1B4]) << 24)
-                      | (static_cast<u32>(rom[0x1B5]) << 16)
-                      | (static_cast<u32>(rom[0x1B6]) <<  8)
-                      |  static_cast<u32>(rom[0x1B7]);
-            sramEnd   = (static_cast<u32>(rom[0x1B8]) << 24)
-                      | (static_cast<u32>(rom[0x1B9]) << 16)
-                      | (static_cast<u32>(rom[0x1BA]) <<  8)
-                      |  static_cast<u32>(rom[0x1BB]);
-            // Ensure minimum 8 KB and clamp to our buffer.
+            sramStart = (static_cast<u32>(data[0x1B4]) << 24)
+                      | (static_cast<u32>(data[0x1B5]) << 16)
+                      | (static_cast<u32>(data[0x1B6]) <<  8)
+                      |  static_cast<u32>(data[0x1B7]);
+            sramEnd   = (static_cast<u32>(data[0x1B8]) << 24)
+                      | (static_cast<u32>(data[0x1B9]) << 16)
+                      | (static_cast<u32>(data[0x1BA]) <<  8)
+                      |  static_cast<u32>(data[0x1BB]);
             u32 declared = (sramEnd >= sramStart) ? (sramEnd - sramStart + 1) : 0;
             sramSize = (declared < 0x2000) ? 0x2000 : declared;
             if (sramSize > GEN_SRAM_MAX) sramSize = GEN_SRAM_MAX;
         }
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input

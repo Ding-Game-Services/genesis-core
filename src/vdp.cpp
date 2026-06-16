@@ -53,6 +53,8 @@ void GenVDP::reset() {
     dmaFillData    = 0;
     dmaFillPending = false;
     vramDirty      = false;
+	regs[1] = 0x40; // Force Display Enable bit to 1
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,6 +138,9 @@ u16 GenVDP::_status() {
 //   Two consecutive byte writes form a register write word.
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeCtrl(u16 val, bool isByte) {
+    // TRACE: See every control command sent by the CPU
+    printf("[VDP CTRL] Val: 0x%04X, Byte: %d\n", val, isByte);
+
     if (isByte) {
         if (!ctrlPendByte) {
             ctrlFirst    = static_cast<u16>(val & 0xFFu);
@@ -205,6 +210,9 @@ void GenVDP::_processCtrlWord(u16 w) {
 // Data port
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeData(u16 val) {
+    // TRACE: See every piece of data sent to the VDP
+    printf("[VDP DATA] Val: 0x%04X, Addr: 0x%04X, CD: 0x%X\n", val, addrReg, cdReg);
+
     dmaFillData = val;
 
     if (dmaFillPending) {
@@ -342,18 +350,24 @@ bool GenVDP::checkHInt(u32 line, bool pal) {
 // Rendering
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_renderLine(u32 line) {
-    if (line == 0) std::memset(framebuf, 0, sizeof(framebuf));
-    // Fix: JS used fixed GEN_H (224) here which cut off the bottom 16 lines in
-    // PAL mode. Use the actual active-line count for the current region.
+    // FIX: Use explicit size to prevent crashes. 
+    // This clears the screen to black at the start of every frame.
+    if (line == 0) std::memset(framebuf, 0, GEN_W * GEN_H_MAX * 4);
+    
     const u32 activeH = isPAL ? GEN_H_PAL : GEN_H_NTSC;
-    if (line < activeH && (regs[1] & 0x40u)) _renderScanline(line);
+    if (line < activeH && (regs[1] & 0x40u)) {
+        _renderScanline(line);
+    }
 }
+
 
 void GenVDP::_renderScanline(u32 y) {
     _renderPlaneLine(true,  y);  // Plane B — drawn first (behind)
     _renderPlaneLine(false, y);  // Plane A — drawn second (in front of B)
     _renderSpriteLine(y);        // Sprites — drawn last (on top)
 }
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plane rendering (Plane A or Plane B)
