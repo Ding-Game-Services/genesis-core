@@ -64,12 +64,10 @@ void GenBus::loadROM(const u8* data, u32 size) {
         }
     }
 
-    if (hasHeader) {
-        // Skip the 512-byte header for the main ROM array
-        rom.assign(data + 0x200, data + size);
-    } else {
-        rom.assign(data, data + size);
-    }
+    // Always load the ROM from the beginning. 
+    // The header is part of the addressable memory map.
+    rom.assign(data, data + size);
+
 
     hasSRAM   = false;
     sramDirty = false;

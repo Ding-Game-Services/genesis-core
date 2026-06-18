@@ -92,13 +92,13 @@ u16 GenVDP::read16(u32 off) {
 void GenVDP::write8(u32 off, u8 val) {
     off &= 0x1Fu;
     if (off < 2) {
-        // Data port byte: even offset = high byte, odd = low byte
-        _writeData((off & 1u) ? static_cast<u16>(val)
-                               : static_cast<u16>(val) << 8);
+        // High byte (off 0) or Low byte (off 1)
+        _writeVRAMByte((off & 1u) ? 1 : 0, val); 
     } else if (off < 8) {
         _writeCtrl(val, true);
     }
 }
+
 
 void GenVDP::write16(u32 off, u16 val) {
     off &= 0x1Fu;
@@ -138,9 +138,6 @@ u16 GenVDP::_status() {
 //   Two consecutive byte writes form a register write word.
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeCtrl(u16 val, bool isByte) {
-    // TRACE: See every control command sent by the CPU
-    printf("[VDP CTRL] Val: 0x%04X, Byte: %d\n", val, isByte);
-
     if (isByte) {
         if (!ctrlPendByte) {
             ctrlFirst    = static_cast<u16>(val & 0xFFu);
@@ -152,34 +149,9 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         return;
     }
 
-    // ── Word path ─────────────────────────────────────────────────────────────
-    if (ctrlPendWord) {
-        ctrlPendWord = false;
-        const u16 w1 = ctrlFirst;
-        const u16 w2 = val;
-        // CD bits: CD1:CD0 from w1 bits 15:14; CD5:CD2 from w2 bits 7:4
-        cdReg   = static_cast<u8>(((w1 >> 14) & 3u) | ((w2 & 0xF0u) >> 2));
-        // Address: A13:A0 from w1 bits 13:0; A15:A14 from w2 bits 1:0
-        addrReg = static_cast<u16>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
-
-        if (cdReg & 0x20u) {
-            // DMA bit set in CD field
-            const u32 dmaMode = (regs[23] >> 6) & 3u;
-            if (dmaMode == 2) {
-                // VRAM fill: arm pending state; DMA fires on next data port write
-                dmaFillPending = true;
-            } else {
-                dmaActive = true;
-                _processDMA(cdReg);
-                dmaActive = false;
-            }
-        }
-        return;
-    }
-
-    // First word
+    // FIX: Register writes MUST take priority and abort pending address sequences
     if ((val & 0xC000u) == 0x8000u) {
-        // Register write: 1000 RRRR RRVV VVVV (bits 13:8 = reg, bits 7:0 = val)
+        ctrlPendWord = false; 
         const u32 r = (val >> 8) & 0x1Fu;
         const u8  v = static_cast<u8>(val & 0xFFu);
         if (r < GEN_VDP_REG_COUNT) {
@@ -189,10 +161,29 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         return;
     }
 
-    // First half of two-word address command
-    ctrlFirst    = val;
+    if (ctrlPendWord) {
+        ctrlPendWord = false;
+        const u16 w1 = ctrlFirst;
+        const u16 w2 = val;
+        cdReg   = static_cast<u8>(((w1 >> 14) & 3u) | ((w2 & 0xF0u) >> 2));
+        addrReg = static_cast<u16>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
+
+        if (cdReg & 0x20u) {
+            const u32 dmaMode = (regs[23] >> 6) & 3u;
+            if (dmaMode == 2) dmaFillPending = true; 
+            else {
+                dmaActive = true;
+                _processDMA(cdReg);
+                dmaActive = false;
+            }
+        }
+        return;
+    }
+
+    ctrlFirst = val;
     ctrlPendWord = true;
 }
+
 
 void GenVDP::_processCtrlWord(u16 w) {
     // Byte-path words can only produce register writes
@@ -210,32 +201,46 @@ void GenVDP::_processCtrlWord(u16 w) {
 // Data port
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeData(u16 val) {
-    // TRACE: See every piece of data sent to the VDP
-    printf("[VDP DATA] Val: 0x%04X, Addr: 0x%04X, CD: 0x%X\n", val, addrReg, cdReg);
-
     dmaFillData = val;
 
     if (dmaFillPending) {
-        // First data write after VRAM fill DMA setup triggers the fill.
         dmaFillPending = false;
-        dmaActive      = true;
+        dmaActive = true;
         _processDMA(cdReg);
         dmaActive = false;
-        vramDirty = true;
         return;
     }
 
-    const u8  cd   = cdReg & 0xFu;
-    const u16 addr = addrReg;
-    if      (cd == 1) {
-        vram[ addr         & 0xFFFFu] = static_cast<u8>(val >> 8);
-        vram[(addr + 1u)   & 0xFFFFu] = static_cast<u8>(val);
-    }
-    else if (cd == 3) { cram [(addr >> 1) & 0x3Fu]  = val; }
-    else if (cd == 5) { vsram[(addr >> 1) & 0x27u]  = val; }
-    addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+    // Word write: write high byte, then low byte
+    _writeVRAMByte(0, static_cast<u8>(val >> 8));
+    _writeVRAMByte(1, static_cast<u8>(val & 0xFF));
     vramDirty = true;
 }
+
+void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
+    const u8 cd = cdReg & 0xFu;
+    const u16 addr = addrReg;
+
+    if (cd == 1) {
+        vram[(addr + bytePos) & 0xFFFFu] = val;
+    } else if (cd == 3) {
+        u16 current = cram[(addr >> 1) & 0x3Fu];
+        if (bytePos == 0) current = (current & 0x00FF) | (val << 8);
+        else             current = (current & 0xFF00) | val;
+        cram[(addr >> 1) & 0x3Fu] = current;
+    } else if (cd == 5) {
+        u16 current = vsram[(addr >> 1) & 0x27u];
+        if (bytePos == 0) current = (current & 0x00FF) | (val << 8);
+        else             current = (current & 0xFF00) | val;
+        vsram[(addr >> 1) & 0x27u] = current;
+    }
+
+    // Only increment the register once the 16-bit "slot" is filled
+    if (bytePos == 1 || cd != 1) { 
+        addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+    }
+}
+
 
 u16 GenVDP::_readData() {
     const u8  cd   = cdReg & 0xFu;
@@ -299,16 +304,14 @@ void GenVDP::_dmaMemoryCopy(u32 srcAddr, u32 len, u8 cd) {
 }
 
 void GenVDP::_dmaVRAMFill(u32 len, u8 cd) {
-    // Fill with the HIGH byte of the last data port write.
-    // The destination is always VRAM for fill mode (cd bit 0 = 1 means VRAM).
     const u8 fillByte = static_cast<u8>(dmaFillData >> 8);
-    const u8 d        = cd & 0xFu;
     for (u32 i = 0; i < len; i++) {
-        if (d == 1) vram[addrReg & 0xFFFFu] = fillByte;
-        addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+        vram[addrReg & 0xFFFFu] = fillByte;
+        addrReg = (addrReg + 1u) & 0xFFFFu;
     }
     vramDirty = true;
 }
+
 
 void GenVDP::_dmaVRAMCopy(u32 len, u8 /*cd*/) {
     // Fix: JS used ((regs[23] & 0x7F) << 8) | regs[22] which ignores reg 21
@@ -318,7 +321,7 @@ void GenVDP::_dmaVRAMCopy(u32 len, u8 /*cd*/) {
     for (u32 i = 0; i < len; i++) {
         vram[addrReg & 0xFFFFu] = vram[src & 0xFFFFu];
         src     = (src     + 1u) & 0xFFFFu;
-        addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+addrReg = (addrReg + 1u) & 0xFFFFu;
     }
     vramDirty = true;
 }

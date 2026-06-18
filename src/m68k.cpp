@@ -101,12 +101,13 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
             return static_cast<u32>(static_cast<s32>(a[reg]) + x + sext8(ext & 0xFFu));
         }
         case 7: switch (reg) {
-            case 0: return static_cast<u32>(sext16(fetch16()));     // xxx.W
+            case 0: return static_cast<u32>(fetch16());              // xxx.W (Zero-extended)
             case 1: return fetch32();                                // xxx.L
             case 2: {                                                // d16(PC)
                 const u32 base = pc;
                 return static_cast<u32>(static_cast<s32>(base) + sext16(fetch16()));
             }
+
             case 3: {                                                // d8(PC,Xn)
                 const u32 base = pc;
                 const u16 ext  = fetch16();
@@ -125,9 +126,8 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
 
 u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
     if (mode == 0) return readDn(reg, sz);
-    if (mode == 1) {                            // An — sign-extend word reads
-        return sz == 1 ? static_cast<u32>(sext16(a[reg] & 0xFFFFu)) : a[reg];
-    }
+if (mode == 1) return a[reg];
+
     if (mode == 7 && reg == 4) {                // #imm
         if (sz == 0) return fetch16() & 0xFFu;
         if (sz == 1) return fetch16();
@@ -138,10 +138,12 @@ u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
 
 void M68K::writeEA(u32 mode, u32 reg, u32 val, u32 sz) {
     if (mode == 0) { writeDn(reg, val, sz); return; }
-    if (mode == 1) {                            // MOVEA — sign extend to 32
-        a[reg] = sz == 1 ? static_cast<u32>(sext16(val & 0xFFFFu)) : val;
+    if (mode == 1) {                            // MOVEA
+        // Address registers are always 32-bit; no sign extension on write
+        a[reg] = val; 
         return;
     }
+
     bus->writeSize(calcEA(mode, reg, sz), val, sz);
 }
 
@@ -285,25 +287,35 @@ void M68K::step() {
     
     // The high nibble (bits 15-12) determines the Instruction Group
     switch ((op >> 12) & 0xFu) {
-        case 0x0: _g0(op);        break; // Bit Ops / Immediate
-        case 0x1: _gMOVE(op);     break; // MOVE (Size is encoded inside op)
-        case 0x2: _gD(op);        break; // ADD / ADDA / ADDX
-        case 0x3: _g9(op);        break; // SUB / SUBA / SUBX
-        case 0x4: _g4(op);        break; // Misc / LEA / MOVEM
-        case 0x5: _g5(op);        break; // ADDQ / SUBQ / Scc
-        case 0x6: _g6(op);        break; // BRA / BSR / Bcc
-        case 0x7: _g7(op);        break; // MOVEQ
-        case 0x8: _g8(op);        break; // OR / DIV / SBCD
-        case 0x9: _g9(op);        break; // SUB / SUBA / SUBX (some encodings)
-        case 0xA: exception(10);  break; // A-line
-        case 0xB: _gB(op);        break; // CMP / EOR
-        case 0xC: _gC(op);        break; // AND / MUL / EXG
-        case 0xD: _gD(op);        break; // ADD / ADDA / ADDX (some encodings)
-        case 0xE: _gE(op);        break; // Shifts / Rotates
-        case 0xF: exception(11);  break; // F-line
+        case 0x0: 
+            // Bit-ops/Immediates only have bit 8 set. 
+            // Standard MOVEs have bit 8 as 0.
+            if (op & 0x0100u) { 
+                _g0(op); 
+            } else {
+                _gMOVE(op);
+            }
+            break;
+
+        case 0x1: _gMOVE(op);     break; // Some MOVE variants also start with 0001
+        case 0x2: _gD(op);        break; 
+        case 0x3: _g9(op);        break; 
+        case 0x4: _g4(op);        break; 
+        case 0x5: _g5(op);        break; 
+        case 0x6: _g6(op);        break; 
+        case 0x7: _g7(op);        break; 
+        case 0x8: _g8(op);        break; 
+        case 0x9: _g9(op);        break; 
+        case 0xA: exception(10);  break; 
+        case 0xB: _gB(op);        break; 
+        case 0xC: _gC(op);        break; 
+        case 0xD: _gD(op);        break; 
+        case 0xE: _gE(op);        break; 
+        case 0xF: exception(11);  break; 
         default:  exception(11);  break;
     }
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,25 +447,48 @@ void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
 // Groups 1/2/3: MOVE / MOVEA
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_gMOVE(u16 op) {
-    // Correct M68K MOVE decoding:
-    // Bits 11-9: dstMode, Bits 8-6: dstReg, Bits 5-4: size, Bits 3-0: srcMode/Reg
-    const u32 srcMode = (op >> 3) & 7u; 
-    const u32 srcReg  = op & 7u;
-    const u32 dstReg  = (op >> 6) & 7u;
-    const u32 dstMode = (op >> 9) & 7u;
-    const u32 sz      = (op >> 4) & 3u; // Size: 0=B, 1=W, 2=L
+    // M68K MOVE Opcode: 0000 ddd s ss aaaa
+    // aaaa (bits 0-3): Source Mode/Reg
+    // ss   (bits 4-5): Destination Mode
+    // s    (bit 6):    Size (0=B, 1=W, 2=L) - Note: 68k uses 1 bit for size here
+    // ddd  (bits 9-11): Destination Register
 
-    const u32 val = readEA(srcMode, srcReg, sz);
+    const u32 srcField = op & 0x000Fu;       // bits 0-3
+    const u32 dstMode  = (op >> 4) & 0x03u;  // bits 4-5
+    const u32 sz       = (op >> 6) & 0x01u;  // bit 6 ONLY
+    const u32 dstReg   = (op >> 9) & 0x07u;  // bits 9-11
 
-    if (dstMode == 1) { // MOVEA: Always treats value as a 32-bit address
-        a[dstReg] = sz == 1 ? static_cast<u32>(sext16(val & 0xFFFFu)) : val;
+    // CORRECT M68K Source Mode Decoding
+    u32 actualSrcMode = 0;
+    u32 actualSrcReg  = 0;
+
+    if ((srcField & 0x8) == 0) {       // 0rrr -> Mode 0 (Dn)
+        actualSrcMode = 0;
+        actualSrcReg  = srcField & 0x7;
+    } else if ((srcField & 0x4) == 0) { // 10rr -> Mode 1 (An)
+        actualSrcMode = 1;
+        actualSrcReg  = srcField & 0x7;
+    } else if ((srcField & 0x2) == 0) { // 110r -> Mode 2 (An+)
+        actualSrcMode = 2;
+        actualSrcReg  = srcField & 0x3;
+    } else if ((srcField & 0x1) == 0) { // 1110 -> Mode 3 (-(An))
+        actualSrcMode = 3;
+        actualSrcReg  = srcField & 0x1;
+    } else {                           // 1111 -> Mode 4-7
+        actualSrcMode = 7; 
+        actualSrcReg = 0; // Simplified Absolute
+    }
+
+    const u32 val = readEA(actualSrcMode, actualSrcReg, sz);
+
+    if (dstMode == 1) { // MOVEA
+        a[dstReg] = val; 
     } else {
         writeEA(dstMode, dstReg, val, sz);
         setNZVC(val, sz);
     }
     cycles += 4;
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Group 4: Miscellaneous

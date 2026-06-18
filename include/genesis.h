@@ -221,6 +221,7 @@ private:
     void _writeCtrl    (u16 val, bool isByte);
     void _processCtrlWord(u16 w);
     void _writeData(u16 val);
+	void _writeVRAMByte(int bytePos, u8 val);
     u16  _readData ();
     u16  _status   ();
     void _processDMA    (u8 cd);
