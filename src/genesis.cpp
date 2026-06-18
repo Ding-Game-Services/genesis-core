@@ -105,8 +105,9 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
     for (u32 line = 0; line < linesFrame; line++) {
+		cpu.run(cpl);
 
-        cpu.run(cpl);
+static int dbgCount = 0;
 
         if (!bus.z80Reset) {
             z80.run(z80cpl);
