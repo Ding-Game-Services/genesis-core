@@ -104,14 +104,15 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // After all scanlines: push audio samples into the ring buffer.
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
-    // 1. Run the CPU
+    // 1. Run the M68K CPU
     const u32 cyclesPerFrame = 73728; 
     cpu.run(cyclesPerFrame);
 
-    // 2. Update the VDP (Render the screen)
-    const u32 activeLines = isPAL ? GEN_H_PAL : GEN_H_NTSC;
-    for (u32 line = 0; line < activeLines; line++) {
-        vdp.tickLine(line, isPAL);
+    // 2. Run the Z80 CPU (if not held in reset)
+    if (!bus.z80Reset) {
+        // The Z80 runs at roughly 3.58MHz, 
+        // we give it a proportionate amount of cycles per frame.
+        z80.run(NTSC_Z80_CPL * NTSC_LINES); 
     }
 
     // 3. Update the APU (Generate audio samples)

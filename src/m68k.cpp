@@ -455,7 +455,7 @@ void M68K::_gMOVE(u16 op) {
 
     const u32 srcField = op & 0x000Fu;       // bits 0-3
     const u32 dstMode  = (op >> 4) & 0x03u;  // bits 4-5
-    const u32 sz       = (op >> 6) & 0x01u;  // bit 6 ONLY
+    const u32 sz       = (((op >> 12) & 0xFu) == 0x1) ? 2 : ((op >> 6) & 0x01u);
     const u32 dstReg   = (op >> 9) & 0x07u;  // bits 9-11
 
     // CORRECT M68K Source Mode Decoding
@@ -696,9 +696,9 @@ void M68K::_g5(u16 op) {
             if (!testCC(cc)) {
                 const u32 cnt = (d[reg]&0xFFFFu) - 1u;
                 writeDn(reg, cnt, 1);
-                if ((cnt&0xFFFFu) != 0xFFFFu) {
+                if ((cnt & 0xFFFFu) != 0) {
                     pc=static_cast<u32>(static_cast<s32>(pc)-2+disp); cycles+=10;
-                } else { cycles+=14; }
+                } else { cycles+=12; }
             } else { cycles+=12; }
             return;
         }
