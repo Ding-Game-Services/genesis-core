@@ -108,6 +108,13 @@ DING_EXPORT void ding_run_frame() {
         char buf[1024];
         s_gen->diagCPU(buf, sizeof(buf));
         printf("%s\n", buf);
+		printf(
+    "PC=%08X SR=%04X D0=%08X A0=%08X\n",
+    s_gen->cpu.pc,
+    s_gen->cpu.sr,
+    s_gen->cpu.d[0],
+    s_gen->cpu.a[0]
+);
 
         // What instruction is at the stuck PC?
 u16 w0 = s_gen->bus.read16(0x1200);

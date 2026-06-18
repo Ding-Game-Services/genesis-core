@@ -104,23 +104,43 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // After all scanlines: push audio samples into the ring buffer.
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
-    // 1. Run the M68K CPU
-    const u32 cyclesPerFrame = 73728; 
-    cpu.run(cyclesPerFrame);
+    for (u32 line = 0; line < linesFrame; line++) {
 
-    // 2. Run the Z80 CPU (if not held in reset)
-    if (!bus.z80Reset) {
-        // The Z80 runs at roughly 3.58MHz, 
-        // we give it a proportionate amount of cycles per frame.
-        z80.run(NTSC_Z80_CPL * NTSC_LINES); 
+        cpu.run(cpl);
+
+        if (!bus.z80Reset) {
+            z80.run(z80cpl);
+        }
+
+        const bool vblankStart = vdp.tickLine(line, isPAL);
+
+        if (vblankStart) {
+            // V-INT enabled?
+            if (vdp.regs[1] & 0x20u) {
+                // temporary placeholder until proper interrupt handling
+            }
+        }
+
+        if (vdp.checkHInt(line, isPAL)) {
+            // temporary placeholder until proper H-INT handling
+        }
     }
 
-    // 3. Update the APU (Generate audio samples)
-    const u32 samplesPerFrame = GEN_AUDIO_RATE / (isPAL ? 50u : 60u);
+    const u32 samplesPerFrame =
+        GEN_AUDIO_RATE / (isPAL ? 50u : 60u);
+
     apu.generateFrame(samplesPerFrame);
 
-    // 4. Increment frame counter
-    frame++;
+vdp.frame++;
+frame++;
+
+static int dbg = 0;
+
+if (++dbg == 60) {
+    char buf[2048];
+    diagVideo(buf, sizeof(buf));
+    printf("%s\n", buf);
+}
 }
 
 

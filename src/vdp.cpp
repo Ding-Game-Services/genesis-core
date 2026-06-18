@@ -138,6 +138,7 @@ u16 GenVDP::_status() {
 //   Two consecutive byte writes form a register write word.
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeCtrl(u16 val, bool isByte) {
+	printf("CTRL WRITE %04X byte=%d\n", val, isByte ? 1 : 0);
     if (isByte) {
         if (!ctrlPendByte) {
             ctrlFirst    = static_cast<u16>(val & 0xFFu);
@@ -156,6 +157,8 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         const u8  v = static_cast<u8>(val & 0xFFu);
         if (r < GEN_VDP_REG_COUNT) {
             regs[r] = v;
+
+printf("VDP REG WRITE R%02u=%02X\n", r, v);
             if (r == 15) addrInc = v;
         }
         return;
