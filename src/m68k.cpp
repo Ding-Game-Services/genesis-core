@@ -257,6 +257,12 @@ bool M68K::testCC(u32 cc) {
 // Exception / interrupt
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::exception(u32 vector) {
+	printf(
+    "EXCEPTION %u PC=%08X SR=%04X\n",
+    vector,
+    pc,
+    sr
+);
     a[7] -= 4; bus->write32(a[7], pc);
     a[7] -= 2; bus->write16(a[7], sr);
     sr = static_cast<u16>((sr | 0x2000u) & ~0x8000u);  // supervisor, clear trace
@@ -284,6 +290,13 @@ bool M68K::interrupt(u32 level) {
 void M68K::step() {
     if (stopped) { cycles += 4; return; }
     const u16 op = fetch16();
+
+static bool printed = false;
+
+if (!printed) {
+    printf("M68K STEP IS RUNNING\n");
+    printed = true;
+}
     
     // The high nibble (bits 15-12) determines the Instruction Group
     switch ((op >> 12) & 0xFu) {
@@ -1004,7 +1017,16 @@ u32 M68K::_doShift(u32 type, bool left, u32 v, u32 cnt, u32 sz) {
 // Run loop
 // ─────────────────────────────────────────────────────────────────────────────
 u32 M68K::run(u32 targetCycles) {
+
+    static bool once = false;
+
+    if (!once) {
+        printf("M68K RUN IS RUNNING\n");
+        once = true;
+    }
+
     while (cycles < targetCycles) step();
+
     const u32 overshoot = cycles - targetCycles;
     cycles = 0;
     return overshoot;
