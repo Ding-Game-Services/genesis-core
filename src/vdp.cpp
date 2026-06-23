@@ -168,7 +168,10 @@ printf("VDP REG WRITE R%02u=%02X\n", r, v);
         ctrlPendWord = false;
         const u16 w1 = ctrlFirst;
         const u16 w2 = val;
-        cdReg   = static_cast<u8>(((w1 >> 14) & 3u) | ((w2 & 0xF0u) >> 2));
+        cdReg = static_cast<u8>(
+      ((w1 >> 14) & 0x03)
+    | ((w2 >> 2)  & 0x30)
+);
         addrReg = static_cast<u16>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
 
         if (cdReg & 0x20u) {
@@ -217,12 +220,12 @@ void GenVDP::_writeData(u16 val) {
     // Word write: write high byte, then low byte
     _writeVRAMByte(0, static_cast<u8>(val >> 8));
     _writeVRAMByte(1, static_cast<u8>(val & 0xFF));
-    addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+    addrReg = (addrReg + addrInc) & 0x3FFFFu;
     vramDirty = true;
 }
 
 void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
-    const u8 cd = cdReg & 0xFu;
+    const u8 cd = cdReg;
     const u16 addr = addrReg;
 
     if (cd == 1) {
@@ -239,22 +242,17 @@ void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
         vsram[(addr >> 1) & 0x27u] = current;
     }
 
-    // Only increment the register once the 16-bit "slot" is filled
-    // Only increment the register once the 16-bit "slot" is filled
-    if (bytePos == 1 || cd != 1) { 
-        addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
-    }
 }
 
 
 u16 GenVDP::_readData() {
-    const u8  cd   = cdReg & 0xFu;
+    const u8 cd = cdReg;
     const u16 addr = addrReg;
     u16 val = 0;
     if      (cd == 0x0) val = (static_cast<u16>(vram[addr]) << 8) | vram[(addr + 1u) & 0xFFFFu];
     else if (cd == 0x8) val = cram [(addr >> 1) & 0x3Fu];
     else if (cd == 0x4) val = vsram[(addr >> 1) & 0x27u];
-    addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
+    addrReg = (addrReg + addrInc) & 0x3FFFFu;
     return val;
 }
 
