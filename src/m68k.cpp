@@ -24,6 +24,11 @@ void M68K::reset() {
     std::memset(a, 0, sizeof(a));
     a[7]    = bus->read32(0);   // SSP from vector table
     pc      = bus->read32(4);   // Initial PC from vector table
+	printf(
+    "RESET SP=%08X PC=%08X\n",
+    a[7],
+    pc
+);
     sr      = 0x2700;           // Supervisor, IPL=7
     stopped = false;
     usp     = 0;
@@ -101,8 +106,10 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
             return static_cast<u32>(static_cast<s32>(a[reg]) + x + sext8(ext & 0xFFu));
         }
         case 7: switch (reg) {
-            case 0: return static_cast<u32>(fetch16());              // xxx.W (Zero-extended)
-            case 1: return fetch32();                                // xxx.L
+			printf("ABS.W consume %04X\n", fetch16());
+        case 0: return static_cast<u32>(static_cast<s32>(static_cast<s16>(fetch16()))); // Absolute Short
+        case 1: return fetch32();                                // Absolute Long
+
             case 2: {                                                // d16(PC)
                 const u32 base = pc;
                 return static_cast<u32>(static_cast<s32>(base) + sext16(fetch16()));
@@ -266,7 +273,9 @@ void M68K::exception(u32 vector) {
     a[7] -= 4; bus->write32(a[7], pc);
     a[7] -= 2; bus->write16(a[7], sr);
     sr = static_cast<u16>((sr | 0x2000u) & ~0x8000u);  // supervisor, clear trace
-    pc = bus->read32(vector * 4u);
+    const u32 newPC = bus->read32(vector * 4u);
+
+pc = newPC;
     cycles += 34;
 }
 
@@ -288,43 +297,64 @@ bool M68K::interrupt(u32 level) {
 // Main decode / execute
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::step() {
-    if (stopped) { cycles += 4; return; }
     const u16 op = fetch16();
+    if (stopped) { cycles += 4; return; }
+    if (pc >= 0x5D0 && pc <= 0x5F0)
+{
+    printf(
+        "TRACE PC=%08X OP=%04X A0=%08X A1=%08X D0=%08X\n",
+        pc - 2,
+        op,
+        a[0],
+        a[1],
+        d[0]
+    );
+}
 
 static bool printed = false;
 
 if (!printed) {
-    printf("M68K STEP IS RUNNING\n");
+    printf("PC=%08X OP=%04X\n", pc - 2, op);
     printed = true;
 }
     
     // The high nibble (bits 15-12) determines the Instruction Group
     switch ((op >> 12) & 0xFu) {
-        case 0x0: 
-            // Bit-ops/Immediates only have bit 8 set. 
-            // Standard MOVEs have bit 8 as 0.
-            if (op & 0x0100u) { 
-                _g0(op); 
-            } else {
-                _gMOVE(op);
-            }
-            break;
+case 0x0:
+    _g0(op);
+    break;
 
-        case 0x1: _gMOVE(op);     break; // Some MOVE variants also start with 0001
-        case 0x2: _gD(op);        break; 
-        case 0x3: _g9(op);        break; 
+       case 0x1: _gMOVE(op);     break;
+		case 0x2: _gMOVE(op);     break;
+		case 0x3: _gMOVE(op);     break;
         case 0x4: _g4(op);        break; 
         case 0x5: _g5(op);        break; 
         case 0x6: _g6(op);        break; 
         case 0x7: _g7(op);        break; 
         case 0x8: _g8(op);        break; 
         case 0x9: _g9(op);        break; 
-        case 0xA: exception(10);  break; 
+        case 0xA:
+    printf(
+        "LINEA PC=%08X OP=%04X\n",
+        pc - 2,
+        op
+    );
+    exception(10);
+    break; 
         case 0xB: _gB(op);        break; 
         case 0xC: _gC(op);        break; 
         case 0xD: _gD(op);        break; 
         case 0xE: _gE(op);        break; 
-        case 0xF: exception(11);  break; 
+        case 0xF:
+    printf(
+        "LINEF PC=%08X OP=%04X D0=%08X A0=%08X\n",
+        pc - 2,
+        op,
+        d[0],
+        a[0]
+    );
+    exception(11);
+    break; 
         default:  exception(11);  break;
     }
 }
@@ -383,8 +413,16 @@ void M68K::_g0(u16 op) {
     if (sz == 3) { _g0Special(op, b11_8, srcMode, srcReg, dstReg); return; }
 
     // Immediate convenience macro
-#define IMM(sz_) ((sz_)==0 ? (fetch16() & 0xFFu) : (sz_)==1 ? fetch16() : fetch32())
-    switch (b11_8) {
+#define IMM(sz_) ((sz_)==0 ? sext8(fetch16() & 0xFFu) : (sz_)==1 ? fetch16() : fetch32())
+printf(
+"G0 op=%04X PC=%08X mode=%u reg=%u size=%u\n",
+op,
+pc-2,
+srcMode,
+srcReg,
+sz
+);   
+   switch (b11_8) {
         case 0x0: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)|i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // ORI
         case 0x2: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)&i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // ANDI
         case 0x4: { const u32 i=IMM(sz), r=doSub(i,readEA(srcMode,srcReg,sz),sz,false); writeEA(srcMode,srcReg,r,sz); cycles+=8; break; }  // SUBI
@@ -394,14 +432,22 @@ void M68K::_g0(u16 op) {
             _doBitOp(typ, num, srcMode, srcReg, readEA(srcMode,srcReg,0)); cycles+=8; break;
         }
         case 0xA: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)^i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // EORI
-        case 0xC: { const u32 i=IMM(sz); doCmp(i,readEA(srcMode,srcReg,sz),sz); cycles+=8; break; }  // CMPI
-        default:
-            if (op & 0x0100u) {   // remaining dynamic bit ops
-                const u32 typ=(op>>6)&3u, num=d[dstReg]&(srcMode==0?31u:7u);
-                _doBitOp(typ, num, srcMode, srcReg, readEA(srcMode,srcReg,0));
-                cycles+=6;
-            }
-            break;
+        case 0xC: {
+    const u32 i = IMM(sz);
+    const u32 dst = readEA(srcMode, srcReg, sz);
+
+    printf(
+        "CMPI PC=%06X src=%02X dst=%02X Z(before branch)=%d\n",
+        pc,
+        i,
+        dst,
+        (sr & 4) ? 1 : 0
+    );
+
+    doCmp(i, dst, sz);
+    cycles += 8;
+    break;
+}
     }
 #undef IMM
 }
@@ -435,12 +481,10 @@ void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*
 void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
     const u32 mask = 1u << num;
     const bool bitSet = (v & mask) != 0u;
-    
-    // Update Condition Codes (Z and N)
-    // Z = 1 if bit is 0; N = 1 if bit is 1
-    u16 ns = sr & ~0x0Cu;
-    if (!bitSet) ns |= 0x04u; // Set Z
-    if (bitSet)  ns |= 0x08u; // Set N
+
+    // BTST/BCHG/BCLR/BSET only affect Z
+    u16 ns = sr & ~0x04u;
+    if (!bitSet) ns |= 0x04u;
     sr = ns;
 
     if (typ == 0) return; // BTST: Just test the bit, don't write back
@@ -460,47 +504,41 @@ void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
 // Groups 1/2/3: MOVE / MOVEA
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_gMOVE(u16 op) {
-    // M68K MOVE Opcode: 0000 ddd s ss aaaa
-    // aaaa (bits 0-3): Source Mode/Reg
-    // ss   (bits 4-5): Destination Mode
-    // s    (bit 6):    Size (0=B, 1=W, 2=L) - Note: 68k uses 1 bit for size here
-    // ddd  (bits 9-11): Destination Register
+	static int moveDump = 0;
 
-    const u32 srcField = op & 0x000Fu;       // bits 0-3
-    const u32 dstMode  = (op >> 4) & 0x03u;  // bits 4-5
-    const u32 sz       = (((op >> 12) & 0xFu) == 0x1) ? 2 : ((op >> 6) & 0x01u);
-    const u32 dstReg   = (op >> 9) & 0x07u;  // bits 9-11
+if (moveDump < 50) {
+    printf("MOVE OPCODE %04X PC=%08X\n", op, pc - 2);
+    moveDump++;
+}
+    // M68K MOVE: 0000 ddd s ss aaaa
+const u32 group = (op >> 12) & 0xFu;
 
-    // CORRECT M68K Source Mode Decoding
-    u32 actualSrcMode = 0;
-    u32 actualSrcReg  = 0;
+u32 sz;
+if (group == 1)      sz = 0; // MOVE.B
+else if (group == 2) sz = 2; // MOVE.L
+else                 sz = 1; // MOVE.W
 
-    if ((srcField & 0x8) == 0) {       // 0rrr -> Mode 0 (Dn)
-        actualSrcMode = 0;
-        actualSrcReg  = srcField & 0x7;
-    } else if ((srcField & 0x4) == 0) { // 10rr -> Mode 1 (An)
-        actualSrcMode = 1;
-        actualSrcReg  = srcField & 0x7;
-    } else if ((srcField & 0x2) == 0) { // 110r -> Mode 2 (An+)
-        actualSrcMode = 2;
-        actualSrcReg  = srcField & 0x3;
-    } else if ((srcField & 0x1) == 0) { // 1110 -> Mode 3 (-(An))
-        actualSrcMode = 3;
-        actualSrcReg  = srcField & 0x1;
-    } else {                           // 1111 -> Mode 4-7
-        actualSrcMode = 7; 
-        actualSrcReg = 0; // Simplified Absolute
-    }
+const u32 srcMode = (op >> 3) & 7u;
+const u32 srcReg  = op & 7u;
 
-    const u32 val = readEA(actualSrcMode, actualSrcReg, sz);
+const u32 dstMode = (op >> 6) & 7u;
+const u32 dstReg  = (op >> 9) & 7u;
 
-    if (dstMode == 1) { // MOVEA
-        a[dstReg] = val; 
-    } else {
-        writeEA(dstMode, dstReg, val, sz);
-        setNZVC(val, sz);
-    }
-    cycles += 4;
+const u32 val = readEA(srcMode, srcReg, sz);
+
+if (dstMode == 1 && group != 1)
+{
+    // MOVEA
+    if (sz == 1)
+        a[dstReg] = static_cast<u32>(sext16(val));
+    else
+        a[dstReg] = val;
+}
+else
+{
+    writeEA(dstMode, dstReg, val, sz);
+    setNZVC(val, sz);
+}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -740,7 +778,6 @@ void M68K::_g6(u16 op) {
 
     if (byteField == 0) {
         disp = sext16(fetch16());
-        adj  = -2;   // target = (pc after ext word) - 2 + disp
     }
 
     if (cc == 1) {   // BSR
