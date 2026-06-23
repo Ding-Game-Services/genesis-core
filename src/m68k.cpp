@@ -106,8 +106,10 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
             return static_cast<u32>(static_cast<s32>(a[reg]) + x + sext8(ext & 0xFFu));
         }
         case 7: switch (reg) {
-			printf("ABS.W consume %04X\n", fetch16());
-        case 0: return static_cast<u32>(static_cast<s32>(static_cast<s16>(fetch16()))); // Absolute Short
+        case 0:
+    return static_cast<u32>(
+        static_cast<s32>(static_cast<s16>(fetch16()))
+    );
         case 1: return fetch32();                                // Absolute Long
 
             case 2: {                                                // d16(PC)
@@ -423,7 +425,23 @@ srcReg,
 sz
 );   
    switch (b11_8) {
-        case 0x0: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)|i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // ORI
+case 0x0: { // ORI
+    const u32 i = IMM(sz);
+
+    if (srcMode >= 2 && srcMode <= 6) {
+        const u32 ea = calcEA(srcMode, srcReg, sz);
+        const u32 v  = bus->readSize(ea, sz) | i;
+        bus->writeSize(ea, v, sz);
+        setNZVC(v, sz);
+    } else {
+        const u32 v = readEA(srcMode, srcReg, sz) | i;
+        writeEA(srcMode, srcReg, v, sz);
+        setNZVC(v, sz);
+    }
+
+    cycles += 8;
+    break;
+}
         case 0x2: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)&i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // ANDI
         case 0x4: { const u32 i=IMM(sz), r=doSub(i,readEA(srcMode,srcReg,sz),sz,false); writeEA(srcMode,srcReg,r,sz); cycles+=8; break; }  // SUBI
         case 0x6: { const u32 i=IMM(sz), r=doAdd(i,readEA(srcMode,srcReg,sz),sz,false); writeEA(srcMode,srcReg,r,sz); cycles+=8; break; }  // ADDI
