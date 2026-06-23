@@ -102,6 +102,12 @@ void GenVDP::write8(u32 off, u8 val) {
 
 void GenVDP::write16(u32 off, u16 val) {
     off &= 0x1Fu;
+
+    printf(
+        "VDP WRITE16 off=%02X val=%04X\n",
+        off,
+        val
+    );
     switch (off & 0xFEu) {
         case 0x00:
         case 0x02: _writeData(val);        break;
@@ -168,11 +174,19 @@ printf("VDP REG WRITE R%02u=%02X\n", r, v);
         ctrlPendWord = false;
         const u16 w1 = ctrlFirst;
         const u16 w2 = val;
-        cdReg = static_cast<u8>(
+cdReg = static_cast<u8>(
       ((w1 >> 14) & 0x03)
     | ((w2 >> 2)  & 0x30)
+    | ((w2 >> 6)  & 0x20)
 );
-        addrReg = static_cast<u16>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
+        addrReg = static_cast<u32>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
+		printf(
+    "VDP CMD w1=%04X w2=%04X addr=%05X cd=%02X\n",
+    w1,
+    w2,
+    addrReg,
+    cdReg
+);
 
         if (cdReg & 0x20u) {
             const u32 dmaMode = (regs[23] >> 6) & 3u;
