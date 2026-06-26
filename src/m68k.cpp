@@ -39,7 +39,8 @@ void M68K::reset() {
 // Instruction fetch
 // ─────────────────────────────────────────────────────────────────────────────
 u16 M68K::fetch16() {
-    const u16 v = bus->read16(pc);
+    u32 oldpc = pc;
+    u16 v = bus->read16(pc);
     pc += 2;
     return v;
 }
@@ -61,6 +62,14 @@ u32 M68K::readDn(u32 n, u32 sz) {
 }
 
 void M68K::writeDn(u32 n, u32 v, u32 sz) {
+
+    if (pc >= 0x5B0 && pc <= 0x5C5) {
+        printf(
+            "writeDn D%u size=%u val=%08X PC=%06X\n",
+            n, sz, v, pc-2
+        );
+    }
+
     if      (sz == 0) d[n] = (d[n] & 0xFFFFFF00u) | (v & 0xFFu);
     else if (sz == 1) d[n] = (d[n] & 0xFFFF0000u) | (v & 0xFFFFu);
     else              d[n] = v;
@@ -134,14 +143,22 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
 }
 
 u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
-    if (mode == 0) return readDn(reg, sz);
-if (mode == 1) return a[reg];
 
-    if (mode == 7 && reg == 4) {                // #imm
+    if (mode == 7 && reg == 4) {
+        printf(
+            "IMM READ PC=%06X size=%u\n",
+            pc,
+            sz
+        );
+
         if (sz == 0) return fetch16() & 0xFFu;
         if (sz == 1) return fetch16();
         return fetch32();
     }
+
+    if (mode == 0) return readDn(reg, sz);
+    if (mode == 1) return a[reg];
+
     return bus->readSize(calcEA(mode, reg, sz), sz);
 }
 
@@ -416,14 +433,6 @@ void M68K::_g0(u16 op) {
 
     // Immediate convenience macro
 #define IMM(sz_) ((sz_)==0 ? sext8(fetch16() & 0xFFu) : (sz_)==1 ? fetch16() : fetch32())
-printf(
-"G0 op=%04X PC=%08X mode=%u reg=%u size=%u\n",
-op,
-pc-2,
-srcMode,
-srcReg,
-sz
-);   
    switch (b11_8) {
 case 0x0: { // ORI
     const u32 i = IMM(sz);
@@ -541,6 +550,17 @@ const u32 srcReg  = op & 7u;
 
 const u32 dstMode = (op >> 6) & 7u;
 const u32 dstReg  = (op >> 9) & 7u;
+
+printf(
+    "MOVE decode PC=%06X op=%04X srcMode=%u srcReg=%u dstMode=%u dstReg=%u size=%u\n",
+    pc-2,
+    op,
+    srcMode,
+    srcReg,
+    dstMode,
+    dstReg,
+    sz
+);
 
 const u32 val = readEA(srcMode, srcReg, sz);
 

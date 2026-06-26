@@ -187,6 +187,12 @@ cdReg = static_cast<u8>(
     addrReg,
     cdReg
 );
+printf(
+    "DATA addr=%05X cd=%02X val=%04X\n",
+    addrReg,
+    cdReg,
+    val
+);
 
         if (cdReg & 0x20u) {
             const u32 dmaMode = (regs[23] >> 6) & 3u;
@@ -242,7 +248,13 @@ void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
     const u8 cd = cdReg;
     const u16 addr = addrReg;
 
-    if (cd == 1) {
+    if ((cd & 0x0F) == 1) {
+		printf(
+    "VRAM WRITE addr=%04X val=%02X cd=%02X\n",
+    (addr + bytePos) & 0xFFFF,
+    val,
+    cd
+);
         vram[(addr + bytePos) & 0xFFFFu] = val;
     } else if (cd == 3) {
         u16 current = cram[(addr >> 1) & 0x3Fu];

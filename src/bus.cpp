@@ -225,12 +225,16 @@ void GenBus::writeZ80Port(u16 addr, u8 val) {
 // read8 — byte read, full address decode
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenBus::read8(u32 addr) {
-    const u32 a = addr & 0xFFFFFFu;
+    const u32 a = addr;
+	
+	if (a >= 0xFF0000u) {
+    printf("WRAM READ8 %06X = %02X\n", a, wram[a & 0xFFFF]);
+}
 
     // ROM  0x000000–0x3FFFFF
-    if (a < 0x400000u) {
-        return (a < static_cast<u32>(rom.size())) ? rom[a] : 0xFFu;
-    }
+if (a >= 0xFF0000u) {
+    return wram[a & 0xFFFFu];
+}
 
     // SRAM
     if (hasSRAM && a >= sramStart && a <= sramEnd)
@@ -257,7 +261,7 @@ u8 GenBus::read8(u32 addr) {
         return vdp ? vdp->read8(a & 0x1Fu) : 0xFFu;
 
     // WRAM  0xE00000–0xFFFFFF (64 KB, mirrored)
-    if (a >= 0xE00000u)
+    if (a >= 0xFF0000u)
         return wram[a & 0xFFFFu];
 
     return 0xFFu;  // open bus
@@ -277,9 +281,9 @@ u16 GenBus::read16(u32 addr) {
     }
 
     // WRAM fast path
-    if (a >= 0xE00000u) {
+   if (a >= 0xFF0000u){
         const u32 wa = a & 0xFFFFu;
-        return (static_cast<u16>(wram[wa]) << 8) | wram[wa + 1u];
+        return (static_cast<u16>(wram[wa]) << 8) | wram[(wa + 1u) & 0xFFFFu];
     }
 
     // VDP
@@ -287,14 +291,25 @@ u16 GenBus::read16(u32 addr) {
         return vdp ? vdp->read16(a & 0x1Fu) : 0xFFFFu;
 
     // Fall back to two byte reads for everything else
-    return (static_cast<u16>(read8(addr)) << 8) | read8(addr + 1u);
+    return (static_cast<u16>(read8(a)) << 8) | read8(a + 1u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // read32
 // ─────────────────────────────────────────────────────────────────────────────
 u32 GenBus::read32(u32 addr) {
-    return (static_cast<u32>(read16(addr)) << 16) | read16(addr + 2u);
+    u32 hi = read16(addr);
+    u32 lo = read16(addr + 2);
+
+    printf(
+        "READ32 addr=%06X hi=%04X lo=%04X result=%08X\n",
+        addr,
+        hi,
+        lo,
+        (hi << 16) | lo
+    );
+
+    return (hi << 16) | lo;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,6 +318,10 @@ u32 GenBus::read32(u32 addr) {
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::write8(u32 addr, u8 val) {
     const u32 a = addr & 0xFFFFFFu;
+
+if (a >= 0xFF0000u) {
+    printf("WRAM WRITE8 %06X = %02X\n", a, val);
+}
 
     // YM2612  0xA04000–0xA04003
     if (a >= 0xA04000u && a <= 0xA04003u) {
@@ -361,11 +380,13 @@ void GenBus::write8(u32 addr, u8 val) {
         return;
     }
 
-    // WRAM  0xE00000–0xFFFFFF
-    if (a >= 0xE00000u) {
-        wram[a & 0xFFFFu] = val;
-        return;
-    }
+// WRAM 0xFF0000–0xFFFFFF
+if (a >= 0xFF0000u) {
+    const u32 wa = a & 0xFFFFu;
+    wram[wa]      = static_cast<u8>(val >> 8);
+    wram[(wa + 1u) & 0xFFFFu] = static_cast<u8>(val);
+    return;
+}
     // All other addresses: open bus, ignore write
 }
 
@@ -374,12 +395,16 @@ void GenBus::write8(u32 addr, u8 val) {
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::write16(u32 addr, u16 val) {
     const u32 a = addr & 0xFFFFFFu;
+	
+	if (a >= 0xC00000u && a < 0xC00020u) {
+    printf("BUS->VDP write16 %06X %04X\n", a, val);
+}
 
     // WRAM fast path
     if (a >= 0xE00000u) {
         const u32 wa = a & 0xFFFFu;
         wram[wa]      = static_cast<u8>(val >> 8);
-        wram[wa + 1u] = static_cast<u8>(val);
+        wram[(wa + 1u) & 0xFFFFu] = static_cast<u8>(val);
         return;
     }
 
