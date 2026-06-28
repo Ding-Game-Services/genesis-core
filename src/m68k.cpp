@@ -63,15 +63,14 @@ u32 M68K::readDn(u32 n, u32 sz) {
 
 void M68K::writeDn(u32 n, u32 v, u32 sz) {
 
-    if (pc >= 0x5B0 && pc <= 0x5C5) {
-        printf(
-            "writeDn D%u size=%u val=%08X PC=%06X\n",
-            n, sz, v, pc-2
-        );
-    }
+    printf(
+        "WRITE D%u size=%u val=%08X PC=%06X\n",
+        n, sz, v, pc-2
+    );
 
     if      (sz == 0) d[n] = (d[n] & 0xFFFFFF00u) | (v & 0xFFu);
-    else if (sz == 1) d[n] = (d[n] & 0xFFFF0000u) | (v & 0xFFFFu);
+   else if (sz == 1)
+    d[n] = v & 0xFFFFu;
     else              d[n] = v;
 }
 
@@ -159,16 +158,35 @@ u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
     if (mode == 0) return readDn(reg, sz);
     if (mode == 1) return a[reg];
 
-    return bus->readSize(calcEA(mode, reg, sz), sz);
+    u32 ea = calcEA(mode, reg, sz);
+u32 value = bus->readSize(ea, sz);
+
+printf(
+    "READEA mode=%u reg=%u sz=%u ea=%08X value=%08X\n",
+    mode,
+    reg,
+    sz,
+    ea,
+    value
+);
+
+return value;
 }
+
+
 
 void M68K::writeEA(u32 mode, u32 reg, u32 val, u32 sz) {
     if (mode == 0) { writeDn(reg, val, sz); return; }
-    if (mode == 1) {                            // MOVEA
-        // Address registers are always 32-bit; no sign extension on write
-        a[reg] = val; 
-        return;
-    }
+if (mode == 1) {
+    printf(
+        "WRITE A%u = %08X PC=%06X\n",
+        reg,
+        val,
+        pc-2
+    );
+    a[reg] = val;
+    return;
+}
 
     bus->writeSize(calcEA(mode, reg, sz), val, sz);
 }
@@ -463,13 +481,13 @@ case 0x0: { // ORI
     const u32 i = IMM(sz);
     const u32 dst = readEA(srcMode, srcReg, sz);
 
-    printf(
-        "CMPI PC=%06X src=%02X dst=%02X Z(before branch)=%d\n",
-        pc,
-        i,
-        dst,
-        (sr & 4) ? 1 : 0
-    );
+printf(
+    "CMPI PC=%06X src=%08X dst=%08X Z=%d\n",
+    pc,
+    i,
+    dst,
+    (sr & 4) ? 1 : 0
+);
 
     doCmp(i, dst, sz);
     cycles += 8;
@@ -574,7 +592,18 @@ if (dstMode == 1 && group != 1)
 }
 else
 {
-    writeEA(dstMode, dstReg, val, sz);
+    printf(
+    "MOVE WRITE srcMode=%u srcReg=%u dstMode=%u dstReg=%u val=%08X sz=%u\n",
+    srcMode,
+    srcReg,
+    dstMode,
+    dstReg,
+    val,
+    sz
+);
+
+writeEA(dstMode, dstReg, val, sz);
+	writeEA(dstMode, dstReg, val, sz);
     setNZVC(val, sz);
 }
 }
@@ -781,14 +810,24 @@ void M68K::_g5(u16 op) {
 
     if (sz == 3) {
         if (mode == 1) {   // DBcc
-            const u32 cc=(op>>8)&0xFu; const s32 disp=sext16(fetch16());
-            if (!testCC(cc)) {
-                const u32 cnt = (d[reg]&0xFFFFu) - 1u;
-                writeDn(reg, cnt, 1);
-                if ((cnt & 0xFFFFu) != 0) {
-                    pc=static_cast<u32>(static_cast<s32>(pc)-2+disp); cycles+=10;
-                } else { cycles+=12; }
-            } else { cycles+=12; }
+const u32 cc=(op>>8)&0xFu;
+const s32 disp=sext16(fetch16());
+
+if (!testCC(cc)) {
+    u16 cnt = static_cast<u16>(d[reg] & 0xFFFFu);
+    cnt--;
+
+    d[reg] = (d[reg] & 0xFFFF0000u) | cnt;
+
+    if (cnt != 0xFFFFu) {
+        pc = static_cast<u32>(static_cast<s32>(pc) + disp);
+        cycles += 10;
+    } else {
+        cycles += 12;
+    }
+} else {
+    cycles += 12;
+}
             return;
         }
         // Scc
@@ -1016,11 +1055,23 @@ void M68K::_gE(u16 op) {
         cycles+=8; return;
     }
 
+
+
     // Register shift/rotate: type in bits 4–3, count from imm or Dn
     const u32 type   = (op>>3)&3u;
     const bool byReg = (op>>5)&1u;
     const u32 cnt    = byReg ? (d[(op>>9)&7u]&63u)
                              : (((op>>9)&7u) ? (op>>9)&7u : 8u);
+							 printf(
+    "SHIFT op=%04X type=%u left=%d cnt=%u size=%u D%u=%08X\n",
+    op,
+    type,
+    left,
+    cnt,
+    sz,
+    reg,
+    d[reg]
+);
     const u32 r = _doShift(type, left, readDn(reg,sz), cnt, sz);
     writeDn(reg,r,sz);
     cycles += 4u + cnt*2u;

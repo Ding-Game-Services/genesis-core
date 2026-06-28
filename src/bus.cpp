@@ -225,6 +225,12 @@ void GenBus::writeZ80Port(u16 addr, u8 val) {
 // read8 — byte read, full address decode
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenBus::read8(u32 addr) {
+
+    printf(
+        "BUS READ8 raw=%08X\n",
+        addr
+    );
+
     const u32 a = addr;
 	
 	if (a >= 0xFF0000u) {
@@ -317,7 +323,14 @@ u32 GenBus::read32(u32 addr) {
 // YM2612 and PSG intercepts live here (replaces the JS monkey-patch).
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::write8(u32 addr, u8 val) {
-    const u32 a = addr & 0xFFFFFFu;
+
+    printf(
+        "BUS WRITE8 raw=%08X val=%02X\n",
+        addr,
+        val
+    );
+
+    const u32 a = addr;
 
 if (a >= 0xFF0000u) {
     printf("WRAM WRITE8 %06X = %02X\n", a, val);
