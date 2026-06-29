@@ -226,51 +226,44 @@ void GenBus::writeZ80Port(u16 addr, u8 val) {
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenBus::read8(u32 addr) {
 
-    printf(
-        "BUS READ8 raw=%08X\n",
-        addr
-    );
+    const u32 a = addr & 0xFFFFFFu;
 
-    const u32 a = addr;
-	
-	if (a >= 0xFF0000u) {
-    printf("WRAM READ8 %06X = %02X\n", a, wram[a & 0xFFFF]);
-}
+    // ROM
+    if (a < 0x400000u) {
+        if (a < rom.size())
+            return rom[a];
+        return 0xFF;
+    }
 
-    // ROM  0x000000–0x3FFFFF
-if (a >= 0xFF0000u) {
-    return wram[a & 0xFFFFu];
-}
+    // WRAM
+    if (a >= 0xFF0000u)
+        return wram[a & 0xFFFFu];
 
     // SRAM
     if (hasSRAM && a >= sramStart && a <= sramEnd)
         return sramData[(a - sramStart) & (sramSize - 1u)];
 
-    // Z80 address space  0xA00000–0xA0FFFF
+    // Z80
     if (a >= 0xA00000u && a < 0xA10000u)
         return z80Ram[a & 0x1FFFu];
 
-    // I/O  0xA10000–0xA1001F
+    // IO
     if (a >= 0xA10000u && a < 0xA10020u)
         return _ioRead8(a);
 
-    // Z80 BUSREQ  0xA11100–0xA11101
+    // BUSREQ
     if (a == 0xA11100u || a == 0xA11101u)
-        return 0x00u;  // bus always immediately granted
+        return 0;
 
-    // Z80 RESET  0xA11200–0xA11201
+    // RESET
     if (a == 0xA11200u || a == 0xA11201u)
-        return z80Reset ? 0x00u : 0xFFu;
+        return z80Reset ? 0 : 0xFF;
 
-    // VDP  0xC00000–0xC0001F
+    // VDP
     if (a >= 0xC00000u && a < 0xC00020u)
-        return vdp ? vdp->read8(a & 0x1Fu) : 0xFFu;
+        return vdp ? vdp->read8(a & 0x1F) : 0xFF;
 
-    // WRAM  0xE00000–0xFFFFFF (64 KB, mirrored)
-    if (a >= 0xFF0000u)
-        return wram[a & 0xFFFFu];
-
-    return 0xFFu;  // open bus
+    return 0xFF;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,7 +407,7 @@ void GenBus::write16(u32 addr, u16 val) {
 }
 
     // WRAM fast path
-    if (a >= 0xE00000u) {
+    if (a >= 0xFF0000u) {
         const u32 wa = a & 0xFFFFu;
         wram[wa]      = static_cast<u8>(val >> 8);
         wram[(wa + 1u) & 0xFFFFu] = static_cast<u8>(val);

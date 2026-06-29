@@ -115,34 +115,41 @@ static int dbgCount = 0;
 
         const bool vblankStart = vdp.tickLine(line, isPAL);
 
-        if (vblankStart) {
-            // V-INT enabled?
-            if (vdp.regs[1] & 0x20u) {
-                // temporary placeholder until proper interrupt handling
+if (vblankStart) {
+    if (vdp.regs[1] & 0x20u) {
+
+        printf(
+            "VBLANK IRQ6 frame=%u line=%u\n",
+            frame,
+            line
+        );
+
+        cpu.interrupt(6);
+    }
+}
+        if (vdp.checkHInt(line, isPAL)) {
+            // H-INT enabled? (reg 0 bit 4)
+            if (vdp.regs[0] & 0x10u) {
+                cpu.interrupt(4);
             }
         }
-
-        if (vdp.checkHInt(line, isPAL)) {
-            // temporary placeholder until proper H-INT handling
-        }
-    }
+    }   // end per-scanline loop
 
     const u32 samplesPerFrame =
         GEN_AUDIO_RATE / (isPAL ? 50u : 60u);
 
     apu.generateFrame(samplesPerFrame);
 
-vdp.frame++;
-frame++;
+    vdp.frame++;
+    frame++;
 
 static int dbg = 0;
-
 if (++dbg == 60) {
     char buf[2048];
     diagVideo(buf, sizeof(buf));
     printf("%s\n", buf);
 }
-}
+}   // end runFrame()
 
 
 // ─────────────────────────────────────────────────────────────────────────────

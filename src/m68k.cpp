@@ -69,8 +69,8 @@ void M68K::writeDn(u32 n, u32 v, u32 sz) {
     );
 
     if      (sz == 0) d[n] = (d[n] & 0xFFFFFF00u) | (v & 0xFFu);
-   else if (sz == 1)
-    d[n] = v & 0xFFFFu;
+else if (sz == 1)
+    d[n] = (d[n] & 0xFFFF0000u) | (v & 0xFFFFu);
     else              d[n] = v;
 }
 
@@ -176,19 +176,45 @@ return value;
 
 
 void M68K::writeEA(u32 mode, u32 reg, u32 val, u32 sz) {
-    if (mode == 0) { writeDn(reg, val, sz); return; }
-if (mode == 1) {
-    printf(
-        "WRITE A%u = %08X PC=%06X\n",
-        reg,
-        val,
-        pc-2
-    );
-    a[reg] = val;
-    return;
-}
 
-    bus->writeSize(calcEA(mode, reg, sz), val, sz);
+    if (mode == 0) {
+        writeDn(reg, val, sz);
+        return;
+    }
+
+    printf(
+        "WRITEEA mode=%u reg=%u PC(before)=%06X\n",
+        mode,
+        reg,
+        pc
+    );
+
+    if (mode == 1) {
+        printf(
+            "WRITE A%u = %08X PC=%06X\n",
+            reg,
+            val,
+            pc-2
+        );
+        a[reg] = val;
+        return;
+    }
+
+    u32 eaSz = sz;
+
+    // Address calculation size is not the same as data size
+    if (mode == 7 && (reg == 0 || reg == 1))
+        eaSz = 2;
+
+    u32 ea = calcEA(mode, reg, eaSz);
+
+    printf(
+        "WRITEEA EA=%08X PC(afterEA)=%06X\n",
+        ea,
+        pc
+    );
+
+    bus->writeSize(ea, val, sz);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,16 +342,36 @@ pc = newPC;
     cycles += 34;
 }
 
-bool M68K::interrupt(u32 level) {
+bool M68K::interrupt(u32 level)
+{
     const u32 ipl = (sr >> 8) & 7u;
-    if (level <= ipl && level != 7u) return false;
+    if (level <= ipl && level != 7u)
+        return false;
+
     stopped = false;
+
     const u16 savedSR = sr;
+
     sr = static_cast<u16>((sr & ~0x0700u) | (level << 8) | 0x2000u);
     sr &= ~0x8000u;
-    a[7] -= 4; bus->write32(a[7], pc);
-    a[7] -= 2; bus->write16(a[7], savedSR);
-    pc = bus->read32((24u + level) * 4u);   // auto-vector 25–31
+
+    a[7] -= 4;
+    bus->write32(a[7], pc);
+
+    a[7] -= 2;
+    bus->write16(a[7], savedSR);
+
+    const u32 vector = bus->read32((24u + level) * 4u);
+
+    printf(
+        "INTERRUPT level=%u vector=%08X oldPC=%08X\n",
+        level,
+        vector,
+        pc
+    );
+
+    pc = vector;          // <-- REQUIRED
+
     cycles += 44;
     return true;
 }
@@ -334,26 +380,53 @@ bool M68K::interrupt(u32 level) {
 // Main decode / execute
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::step() {
-    const u16 op = fetch16();
-    if (stopped) { cycles += 4; return; }
+    const u32 fetchPC = pc;
+u16 op = fetch16();
+
+printf(
+    "FETCH PC=%06X OP=%04X NEWPC=%06X\n",
+    fetchPC,
+    op,
+    pc
+);
+
+    if (stopped) { 
+        cycles += 4; 
+        return; 
+    }
+
+    static int bootTrace = 0;
+
+    if (bootTrace < 100) {
+        printf(
+            "BOOT PC=%08X OP=%04X SP=%08X\n",
+            pc - 2,
+            op,
+            a[7]
+        );
+        bootTrace++;
+    }
+
     if (pc >= 0x5D0 && pc <= 0x5F0)
-{
-    printf(
-        "TRACE PC=%08X OP=%04X A0=%08X A1=%08X D0=%08X\n",
-        pc - 2,
-        op,
-        a[0],
-        a[1],
-        d[0]
-    );
-}
+    {
+        printf(
+            "TRACE PC=%08X OP=%04X A0=%08X A1=%08X D0=%08X\n",
+            pc - 2,
+            op,
+            a[0],
+            a[1],
+            d[0]
+        );
+    }
 
-static bool printed = false;
+    static bool printed = false;
 
-if (!printed) {
-    printf("PC=%08X OP=%04X\n", pc - 2, op);
-    printed = true;
-}
+    if (!printed) {
+        printf("PC=%08X OP=%04X\n", pc - 2, op);
+        printed = true;
+    }
+
+    // existing switch continues here
     
     // The high nibble (bits 15-12) determines the Instruction Group
     switch ((op >> 12) & 0xFu) {
@@ -450,7 +523,9 @@ void M68K::_g0(u16 op) {
     if (sz == 3) { _g0Special(op, b11_8, srcMode, srcReg, dstReg); return; }
 
     // Immediate convenience macro
-#define IMM(sz_) ((sz_)==0 ? sext8(fetch16() & 0xFFu) : (sz_)==1 ? fetch16() : fetch32())
+#define IMM(sz_) \
+((sz_)==0 ? (fetch16() & 0xFFu) : \
+ (sz_)==1 ? fetch16() : fetch32())
    switch (b11_8) {
 case 0x0: { // ORI
     const u32 i = IMM(sz);
@@ -481,12 +556,14 @@ case 0x0: { // ORI
     const u32 i = IMM(sz);
     const u32 dst = readEA(srcMode, srcReg, sz);
 
+doCmp(i,dst,sz);
+
 printf(
-    "CMPI PC=%06X src=%08X dst=%08X Z=%d\n",
-    pc,
-    i,
-    dst,
-    (sr & 4) ? 1 : 0
+"CMPI PC=%06X src=%08X dst=%08X Z=%d\n",
+pc,
+i,
+dst,
+(sr & 4) ? 1 : 0
 );
 
     doCmp(i, dst, sz);
@@ -600,10 +677,9 @@ else
     dstReg,
     val,
     sz
-);
+    );
 
-writeEA(dstMode, dstReg, val, sz);
-	writeEA(dstMode, dstReg, val, sz);
+    writeEA(dstMode, dstReg, val, sz);
     setNZVC(val, sz);
 }
 }
@@ -617,6 +693,23 @@ void M68K::_g4(u16 op) {
     const u32 mode   = (op >> 3) & 7u;
     const u32 reg    = op & 7u;
     const u32 dstReg = (op >> 9) & 7u;
+	
+	if ((op&0x01C0u)==0x01C0u) {                                   // LEA
+    u32 ea = calcEA(mode,reg,2);
+
+    printf(
+        "LEA mode=%u reg=%u -> A%u = %08X PC=%08X\n",
+        mode,
+        reg,
+        dstReg,
+        ea,
+        pc
+    );
+
+    a[dstReg] = ea;
+    cycles+=4;
+    return;
+}
 
     switch (b11_8) {
         case 0x0: {
@@ -701,9 +794,7 @@ case 0x6: {
                 else if (dn>ub) { sr&=~0x08u; exception(6); }
                 cycles+=10; return;
             }
-            if ((op&0x01C0u)==0x01C0u) {                                   // LEA
-                a[dstReg]=calcEA(mode,reg,2); cycles+=4; return;
-            }
+
             break;
     }
 }
@@ -819,12 +910,12 @@ if (!testCC(cc)) {
 
     d[reg] = (d[reg] & 0xFFFF0000u) | cnt;
 
-    if (cnt != 0xFFFFu) {
-        pc = static_cast<u32>(static_cast<s32>(pc) + disp);
-        cycles += 10;
-    } else {
-        cycles += 12;
-    }
+if (cnt != 0xFFFFu) {
+    pc = static_cast<u32>(static_cast<s32>(pc) + disp);
+    cycles += 10;
+} else {
+    cycles += 14;
+}
 } else {
     cycles += 12;
 }
@@ -847,26 +938,108 @@ if (!testCC(cc)) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Group 6: BRA / BSR / Bcc
 // ─────────────────────────────────────────────────────────────────────────────
-void M68K::_g6(u16 op) {
-    const u32 cc        = (op>>8)&0xFu;
-    const u32 byteField = op & 0xFFu;
-    s32 disp            = sext8(byteField);
-    s32 adj             = 0;
+void M68K::_g6(u16 op)
+{
+    printf(
+        "G6 HIT PC=%06X OP=%04X\n",
+        pc-2,
+        op
+    );
 
-    if (byteField == 0) {
+    const u32 cc=(op>>8)&0xF;
+    const u32 byteField = op & 0xFF;
+
+
+// DBcc
+if ((op & 0x00F8) == 0x00C8) {
+
+    s32 dbdisp = sext16(fetch16());
+    const u32 reg = op & 7;
+
+    if (testCC(cc)) {
+        cycles += 12;
+        return;
+    }
+
+    u16 count =
+        static_cast<u16>(d[reg] & 0xFFFF);
+
+    count--;
+
+    d[reg] =
+        (d[reg] & 0xFFFF0000u) | count;
+
+
+    if (count != 0xFFFF) {
+
+        pc = static_cast<u32>(
+            static_cast<s32>(pc) + dbdisp
+        );
+
+        cycles += 10;
+    }
+    else {
+        cycles += 14;
+    }
+
+    return;
+}
+
+
+    // BRA
+    if (cc == 0) {
+
+        s32 disp = sext8(byteField);
+
+        if (byteField == 0)
+            disp = sext16(fetch16());
+
+        pc = static_cast<u32>(
+            static_cast<s32>(pc) + disp
+        );
+
+        cycles += 10;
+        return;
+    }
+
+
+    // BSR
+    if (cc == 1) {
+
+        s32 disp = sext8(byteField);
+
+        if (byteField == 0)
+            disp = sext16(fetch16());
+
+        a[7] -= 4;
+        bus->write32(a[7], pc);
+
+        pc = static_cast<u32>(
+            static_cast<s32>(pc) + disp
+        );
+
+        cycles += 18;
+        return;
+    }
+
+
+    // Bcc
+    s32 disp = sext8(byteField);
+
+    if (byteField == 0)
         disp = sext16(fetch16());
-    }
 
-    if (cc == 1) {   // BSR
-        a[7]-=4; bus->write32(a[7], pc);
-        pc = static_cast<u32>(static_cast<s32>(pc) + adj + disp);
-        cycles+=18; return;
+
+    if (testCC(cc)) {
+
+        pc = static_cast<u32>(
+            static_cast<s32>(pc) + disp
+        );
+
+        cycles += 10;
     }
-    if (cc == 0 || testCC(cc)) {
-        pc = static_cast<u32>(static_cast<s32>(pc) + adj + disp);
-        cycles+=10;
-    } else {
-        cycles+=8;
+    else {
+        cycles += 8;
     }
 }
 
