@@ -104,8 +104,7 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // After all scanlines: push audio samples into the ring buffer.
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
-    for (u32 line = 0; line < linesFrame; line++) {
-		cpu.run(cpl);
+for (u32 line = 0; line < linesFrame; line++) {
 
 static int dbgCount = 0;
 
@@ -116,6 +115,33 @@ static int dbgCount = 0;
         const bool vblankStart = vdp.tickLine(line, isPAL);
 
 if (vblankStart) {
+    printf(
+        "VBLANK HIT line=%u REG1=%02X\n",
+        line,
+        vdp.regs[1]
+    );
+}
+
+if (vblankStart) {
+    printf(
+        "VBLANK line=%u REG1=%02X\n",
+        line,
+        vdp.regs[1]
+    );
+}
+
+if (vblankStart) {
+
+    static int irqdbg = 0;
+
+    if (irqdbg < 5) {
+        printf(
+            "VBLANK reached REG1=%02X\n",
+            vdp.regs[1]
+        );
+        irqdbg++;
+    }
+
     if (vdp.regs[1] & 0x20u) {
 
         printf(
@@ -124,7 +150,12 @@ if (vblankStart) {
             line
         );
 
-        cpu.interrupt(6);
+        bool accepted = cpu.interrupt(6);
+
+printf(
+    "IRQ6 accepted=%d\n",
+    accepted
+);
     }
 }
         if (vdp.checkHInt(line, isPAL)) {

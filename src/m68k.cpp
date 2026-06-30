@@ -383,13 +383,6 @@ void M68K::step() {
     const u32 fetchPC = pc;
 u16 op = fetch16();
 
-printf(
-    "FETCH PC=%06X OP=%04X NEWPC=%06X\n",
-    fetchPC,
-    op,
-    pc
-);
-
     if (stopped) { 
         cycles += 4; 
         return; 
@@ -940,11 +933,16 @@ if (cnt != 0xFFFFu) {
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_g6(u16 op)
 {
+static int g6dbg = 0;
+
+if (g6dbg < 10) {
     printf(
         "G6 HIT PC=%06X OP=%04X\n",
         pc-2,
         op
     );
+    g6dbg++;
+}
 
     const u32 cc=(op>>8)&0xF;
     const u32 byteField = op & 0xFF;
@@ -1324,7 +1322,22 @@ u32 M68K::run(u32 targetCycles) {
         once = true;
     }
 
-    while (cycles < targetCycles) step();
+    while (cycles < targetCycles)
+{
+    step();
+
+    static int dbg = 0;
+    if (++dbg == 100000)
+    {
+        printf(
+            "CPU RUN STUCK cycles=%u target=%u PC=%08X\n",
+            cycles,
+            targetCycles,
+            pc
+        );
+        dbg = 0;
+    }
+}
 
     const u32 overshoot = cycles - targetCycles;
     cycles = 0;

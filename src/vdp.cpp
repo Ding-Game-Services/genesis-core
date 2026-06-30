@@ -359,13 +359,39 @@ addrReg = (addrReg + 1u) & 0xFFFFu;
 // Scanline timing hooks
 // ─────────────────────────────────────────────────────────────────────────────
 bool GenVDP::tickLine(u32 line, bool pal) {
+    static bool once = false;
+
+    if (!once) {
+        printf(
+            "tickLine called PAL=%d active=%u line=%u\n",
+            pal,
+            pal ? PAL_ACTIVE : NTSC_ACTIVE,
+            line
+        );
+        once = true;
+    }
+
     vcounter = static_cast<u16>(line);
     const u32 activeH = pal ? PAL_ACTIVE : NTSC_ACTIVE;
     vblank = (line >= activeH);
     hblank = false;
     _renderLine(line);
+
     const bool doVBlank = (line == activeH);
-    if (doVBlank) vintPending = true;
+
+if (doVBlank) {
+    vintPending = true;
+
+    static int vbdbg = 0;
+    if (vbdbg < 5) {
+        printf(
+            "VBLANK tick line=%u\n",
+            line
+        );
+        vbdbg++;
+    }
+}
+
     // Note: frame counter is incremented by Genesis::runFrame, not here
     return doVBlank;
 }
