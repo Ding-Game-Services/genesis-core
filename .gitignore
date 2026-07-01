@@ -5,3 +5,4 @@ build-g/
 *.a
 *.wasm
 *.d
+sdk/
