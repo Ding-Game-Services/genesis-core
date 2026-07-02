@@ -145,32 +145,44 @@ u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
 
     if (mode == 7 && reg == 4) {
         printf(
-            "IMM READ PC=%06X size=%u\n",
+            "IMM READ BEFORE PC=%06X size=%u\n",
             pc,
             sz
         );
 
-        if (sz == 0) return fetch16() & 0xFFu;
-        if (sz == 1) return fetch16();
-        return fetch32();
+        if (sz == 0) {
+            u32 v = fetch16() & 0xFFu;
+            printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
+            return v;
+        }
+
+        if (sz == 1) {
+            u32 v = fetch16();
+            printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
+            return v;
+        }
+
+        u32 v = fetch32();
+        printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
+        return v;
     }
 
     if (mode == 0) return readDn(reg, sz);
     if (mode == 1) return a[reg];
 
     u32 ea = calcEA(mode, reg, sz);
-u32 value = bus->readSize(ea, sz);
+    u32 value = bus->readSize(ea, sz);
 
-printf(
-    "READEA mode=%u reg=%u sz=%u ea=%08X value=%08X\n",
-    mode,
-    reg,
-    sz,
-    ea,
-    value
-);
+    printf(
+        "READEA mode=%u reg=%u sz=%u ea=%08X value=%08X\n",
+        mode,
+        reg,
+        sz,
+        ea,
+        value
+    );
 
-return value;
+    return value;
 }
 
 
@@ -326,25 +338,42 @@ bool M68K::testCC(u32 cc) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Exception / interrupt
 // ─────────────────────────────────────────────────────────────────────────────
-void M68K::exception(u32 vector) {
-	printf(
-    "EXCEPTION %u PC=%08X SR=%04X\n",
-    vector,
-    pc,
-    sr
-);
-    a[7] -= 4; bus->write32(a[7], pc);
-    a[7] -= 2; bus->write16(a[7], sr);
-    sr = static_cast<u16>((sr | 0x2000u) & ~0x8000u);  // supervisor, clear trace
-    const u32 newPC = bus->read32(vector * 4u);
+void M68K::exception(u32 vector)
+{
+    printf(
+        "EXCEPTION %u PC=%08X SR=%04X\n",
+        vector,
+        pc,
+        sr
+    );
 
-pc = newPC;
+    a[7] -= 6;
+
+    bus->write16(a[7], sr);
+    bus->write32(a[7] + 2, pc);
+
+    sr = static_cast<u16>((sr | 0x2000u) & ~0x8000u);
+
+    pc = bus->read32(vector * 4u);
+
+    printf(
+        "EXCEPTION NEW PC=%08X\n",
+        pc
+    );
+
     cycles += 34;
 }
 
 bool M68K::interrupt(u32 level)
 {
     const u32 ipl = (sr >> 8) & 7u;
+
+printf(
+    "INT TRY level=%u IPL=%u\n",
+    level,
+    (sr >> 8)&7
+);
+
     if (level <= ipl && level != 7u)
         return false;
 
@@ -355,11 +384,10 @@ bool M68K::interrupt(u32 level)
     sr = static_cast<u16>((sr & ~0x0700u) | (level << 8) | 0x2000u);
     sr &= ~0x8000u;
 
-    a[7] -= 4;
-    bus->write32(a[7], pc);
+a[7] -= 6;
 
-    a[7] -= 2;
-    bus->write16(a[7], savedSR);
+bus->write16(a[7], savedSR);
+bus->write32(a[7] + 2, pc);
 
     const u32 vector = bus->read32((24u + level) * 4u);
 
@@ -370,7 +398,7 @@ bool M68K::interrupt(u32 level)
         pc
     );
 
-    pc = vector;          // <-- REQUIRED
+    pc = vector;
 
     cycles += 44;
     return true;
@@ -380,12 +408,33 @@ bool M68K::interrupt(u32 level)
 // Main decode / execute
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::step() {
-    const u32 fetchPC = pc;
-u16 op = fetch16();
 
     if (stopped) { 
         cycles += 4; 
         return; 
+    }
+
+    const u32 fetchPC = pc;
+    u16 op = fetch16();
+
+    printf(
+        "FETCH PC=%08X OP=%04X SP=%08X\n",
+        fetchPC,
+        op,
+        a[7]
+    );
+
+    static int trace = 0;
+
+    if (trace < 200) {
+        printf(
+            "CPU STEP PC=%08X OP=%04X SR=%04X SP=%08X\n",
+            fetchPC,
+            op,
+            sr,
+            a[7]
+        );
+        trace++;
     }
 
     static int bootTrace = 0;
@@ -393,18 +442,18 @@ u16 op = fetch16();
     if (bootTrace < 100) {
         printf(
             "BOOT PC=%08X OP=%04X SP=%08X\n",
-            pc - 2,
+            fetchPC,
             op,
             a[7]
         );
         bootTrace++;
     }
 
-    if (pc >= 0x5D0 && pc <= 0x5F0)
+    if (fetchPC >= 0x5D0 && fetchPC <= 0x5F0)
     {
         printf(
             "TRACE PC=%08X OP=%04X A0=%08X A1=%08X D0=%08X\n",
-            pc - 2,
+            fetchPC,
             op,
             a[0],
             a[1],
@@ -415,53 +464,102 @@ u16 op = fetch16();
     static bool printed = false;
 
     if (!printed) {
-        printf("PC=%08X OP=%04X\n", pc - 2, op);
+        printf("PC=%08X OP=%04X\n", fetchPC, op);
         printed = true;
     }
 
-    // existing switch continues here
-    
-    // The high nibble (bits 15-12) determines the Instruction Group
-    switch ((op >> 12) & 0xFu) {
-case 0x0:
-    _g0(op);
-    break;
+u32 beforePC = fetchPC;
 
-       case 0x1: _gMOVE(op);     break;
-		case 0x2: _gMOVE(op);     break;
-		case 0x3: _gMOVE(op);     break;
-        case 0x4: _g4(op);        break; 
-        case 0x5: _g5(op);        break; 
-        case 0x6: _g6(op);        break; 
-        case 0x7: _g7(op);        break; 
-        case 0x8: _g8(op);        break; 
-        case 0x9: _g9(op);        break; 
+    switch ((op >> 12) & 0xF) {
+        case 0x0:
+            _g0(op);
+            break;
+
+        case 0x1:
+        case 0x2:
+        case 0x3:
+            _gMOVE(op);
+            break;
+
+        case 0x4:
+            _g4(op);
+            break;
+
+        case 0x5:
+            _g5(op);
+            break;
+
+        case 0x6:
+            _g6(op);
+            break;
+
+        case 0x7:
+            _g7(op);
+            break;
+
+        case 0x8:
+            _g8(op);
+            break;
+
+        case 0x9:
+            _g9(op);
+            break;
+
         case 0xA:
+            printf(
+                "LINEA PC=%08X OP=%04X\n",
+                fetchPC,
+                op
+            );
+            exception(10);
+            break;
+
+        case 0xB:
+            _gB(op);
+            break;
+
+        case 0xC:
+            _gC(op);
+            break;
+
+        case 0xD:
+            _gD(op);
+            break;
+
+        case 0xE:
+            _gE(op);
+            break;
+
+case 0xF:
     printf(
-        "LINEA PC=%08X OP=%04X\n",
-        pc - 2,
-        op
-    );
-    exception(10);
-    break; 
-        case 0xB: _gB(op);        break; 
-        case 0xC: _gC(op);        break; 
-        case 0xD: _gD(op);        break; 
-        case 0xE: _gE(op);        break; 
-        case 0xF:
-    printf(
-        "LINEF PC=%08X OP=%04X D0=%08X A0=%08X\n",
-        pc - 2,
+        "LINEF PC=%08X OP=%04X D0=%08X A0=%08X SP=%08X\n",
+        fetchPC,
         op,
         d[0],
-        a[0]
+        a[0],
+        a[7]
     );
-    exception(11);
-    break; 
-        default:  exception(11);  break;
+
+    printf("HALTING AFTER FIRST LINEF\n");
+    stopped = true;
+    return;
+
+        default:
+            exception(11);
+            break;
+    }
+
+
+    if (pc != fetchPC + 2) {
+        printf(
+            "PC CHANGE %08X -> %08X after OP=%04X SP=%08X\n",
+            fetchPC,
+            pc,
+            op,
+            a[7]
+        );
     }
 }
-
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,31 +665,64 @@ dst,
 #undef IMM
 }
 
-void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*dstReg*/) {
+void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*dstReg*/)
+{
+    u16 oldSR = sr;
+
     switch (b11_8) {
+
         case 0x0: { 
             const u16 i = static_cast<u16>(fetch16());
+
+            printf(
+                "G0 SPECIAL ORI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
+                op,
+                i,
+                sr,
+                pc
+            );
+
             if(op & 0x40u) sr = static_cast<u16>(sr | (i & 0xA71Fu)); 
             else           sr = static_cast<u16>(sr | (i & 0x1Fu)); 
             cycles += 20; 
             break; 
         }
+
         case 0x2: { 
             const u16 i = static_cast<u16>(fetch16());
+
+            printf(
+                "G0 SPECIAL ANDI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
+                op,
+                i,
+                sr,
+                pc
+            );
+
             if(op & 0x40u) sr = static_cast<u16>(sr & (i & 0xA71Fu)); 
             else           sr = static_cast<u16>((sr & ~0x1Fu) | (i & 0x1Fu)); 
             cycles += 20; 
             break; 
         }
+
         case 0xA: { 
             const u16 i = static_cast<u16>(fetch16());
+
+            printf(
+                "G0 SPECIAL EORI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
+                op,
+                i,
+                sr,
+                pc
+            );
+
             if(op & 0x40u) sr = static_cast<u16>(sr ^ (i & 0xA71Fu)); 
             else           sr = static_cast<u16>(sr ^ (i & 0x1Fu)); 
             cycles += 20; 
             break; 
         }
-    } // This closes the switch
-} // This closes the function
+    }
+}
 
 void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
     const u32 mask = 1u << num;
@@ -721,10 +852,27 @@ void M68K::_g4(u16 op) {
         }
 case 0x4: {
     if (sz == 3) {
-        // MOVE EA→CCR: only update lower 5 bits (condition codes), leave SR intact
-        const u32 v = readEA(mode, reg, 1);
-        sr = static_cast<u16>((sr & ~0x1Fu) | (v & 0x1Fu));
-        cycles += 20; return;
+
+        const u32 oldSR = sr;
+        const u32 v = readEA(mode, reg, 2);
+
+        printf(
+            "MOVE TO SR PC=%08X value=%04X oldSR=%04X\n",
+            pc,
+            v,
+            oldSR
+        );
+
+        sr = static_cast<u16>(v);
+
+        printf(
+            "NEW SR=%04X IPL=%u\n",
+            sr,
+            (sr >> 8) & 7
+        );
+
+        cycles += 20;
+        return;
     }
     const u32 r = doSub(readEA(mode,reg,sz), 0u, sz, false);   // NEG
     writeEA(mode,reg,r,sz); cycles+=6; return;
@@ -813,9 +961,43 @@ void M68K::_g4E(u16 op, u32 mode, u32 reg, u32 /*sz*/) {
     switch (lo8) {
         case 0x70: cycles+=132; return;   // RESET
         case 0x71: cycles+=  4; return;   // NOP
-        case 0x72: sr=static_cast<u16>(fetch16()&0xA71Fu); stopped=true; cycles+=4; return; // STOP
-        case 0x73: sr=bus->read16(a[7])&0xA71Fu; a[7]+=2; pc=bus->read32(a[7]); a[7]+=4; cycles+=20; return; // RTE
-        case 0x75: pc=bus->read32(a[7]); a[7]+=4; cycles+=16; return; // RTS
+case 0x72:
+{
+    const u16 newSR = fetch16();
+
+    sr = newSR;
+    stopped = true;
+
+    cycles += 4;
+    return;
+}
+case 0x73:
+{
+    sr = bus->read16(a[7]);
+    a[7] += 2;
+
+    pc = bus->read32(a[7]);
+    a[7] += 4;
+
+    cycles += 20;
+    return;
+}
+case 0x75:
+{
+    u32 oldsp = a[7];
+    u32 ret = bus->read32(a[7]);
+
+    printf(
+        "RTS SP=%08X RET=%08X\n",
+        oldsp,
+        ret
+    );
+
+    pc = ret;
+    a[7]+=4;
+    cycles+=16;
+    return;
+}
         case 0x76: if (sr&0x02u) exception(7); cycles+=4; return;     // TRAPV
         case 0x77: {                                                    // RTR
             const u16 ccr=bus->read16(a[7])&0x1Fu; a[7]+=2;

@@ -106,29 +106,30 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 void Genesis::runFrame() {
 for (u32 line = 0; line < linesFrame; line++) {
 
-static int dbgCount = 0;
+    static int dbgCount = 0;
 
-        if (!bus.z80Reset) {
-            z80.run(z80cpl);
-        }
+    if (!bus.z80Reset) {
+        z80.run(z80cpl);
+    }
 
-        const bool vblankStart = vdp.tickLine(line, isPAL);
+    const bool vblankStart = vdp.tickLine(line, isPAL);
 
-if (vblankStart) {
-    printf(
-        "VBLANK HIT line=%u REG1=%02X\n",
-        line,
-        vdp.regs[1]
-    );
-}
 
-if (vblankStart) {
-    printf(
-        "VBLANK line=%u REG1=%02X\n",
-        line,
-        vdp.regs[1]
-    );
-}
+    const u32 lineStartCycles = cpu.cycles;
+
+    while (cpu.cycles < lineStartCycles + 488) {
+        cpu.step();
+    }
+    // ------------------
+
+
+    if (vblankStart) {
+        printf(
+            "VBLANK HIT line=%u REG1=%02X\n",
+            line,
+            vdp.regs[1]
+        );
+    }
 
 if (vblankStart) {
 
