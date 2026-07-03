@@ -610,8 +610,17 @@ void M68K::_g0(u16 op) {
         cycles += 6; return;
     }
 
-    const u32 sz = (op >> 6) & 3u;
-    if (sz == 3) { _g0Special(op, b11_8, srcMode, srcReg, dstReg); return; }
+const u32 sz = (op >> 6) & 3u;
+
+    // ORI/ANDI/EORI #imm,CCR (byte form) and #imm,SR (word form) both encode
+    // as srcMode=7, srcReg=4 (immediate EA). Real opcode bits give sz=0 for
+    // the CCR form and sz=1 for the SR form -- sz is never 3 here, so this
+    // must be matched directly instead of gated on sz==3 (which was dead code).
+    if (srcMode == 7 && srcReg == 4 &&
+        (b11_8 == 0x0u || b11_8 == 0x2u || b11_8 == 0xAu)) {
+        _g0Special(op, b11_8, srcMode, srcReg, dstReg);
+        return;
+    }
 
     // Immediate convenience macro
 #define IMM(sz_) \
