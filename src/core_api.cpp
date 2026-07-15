@@ -166,7 +166,7 @@ DING_EXPORT u32 ding_get_memory_region_count() {
 }
 
 DING_EXPORT void ding_get_memory_region(u32 index, DingMemoryRegion* out) {
-    if (!out || !s_gen || index >= REGION_COUNT) return;
+    if (!out || !s_gen || index >= ding_get_memory_region_count()) return;
     std::memset(out, 0, sizeof(*out));
 
     switch (index) {

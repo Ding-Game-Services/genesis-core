@@ -851,7 +851,7 @@ void M68K::_g4(u16 op) {
             writeEA(mode,reg,r,sz); cycles+=6; return;
         }
         case 0x2: {
-            if (sz == 3) {                                                  // MOVE #→CCR
+            if (sz == 3) {                                                  // MOVE #→CCR (immediate form: ANDI/ORI/EORI use group 0)
                 sr = static_cast<u16>((sr & ~0x1Fu) | (fetch16() & 0x1Fu));
                 cycles+=20; return;
             }
@@ -860,26 +860,8 @@ void M68K::_g4(u16 op) {
             cycles+=4; return;
         }
 case 0x4: {
-    if (sz == 3) {
-
-        const u32 oldSR = sr;
-        const u32 v = readEA(mode, reg, 2);
-
-        printf(
-            "MOVE TO SR PC=%08X value=%04X oldSR=%04X\n",
-            pc,
-            v,
-            oldSR
-        );
-
-        sr = static_cast<u16>(v);
-
-        printf(
-            "NEW SR=%04X IPL=%u\n",
-            sr,
-            (sr >> 8) & 7
-        );
-
+    if (sz == 3) {                                                  // MOVE EA→CCR (non-privileged, low byte only)
+        sr = static_cast<u16>((sr & ~0x1Fu) | (readEA(mode, reg, 1) & 0x1Fu));
         cycles += 20;
         return;
     }
@@ -1086,6 +1068,7 @@ void M68K::_g5(u16 op) {
     if (sz == 3) {
         if (mode == 1) {   // DBcc
 const u32 cc=(op>>8)&0xFu;
+const u32 dispAddr = pc;              // address of the displacement word — branch base per 68k spec
 const s32 disp=sext16(fetch16());
 
 if (!testCC(cc)) {
@@ -1095,7 +1078,7 @@ if (!testCC(cc)) {
     d[reg] = (d[reg] & 0xFFFF0000u) | cnt;
 
 if (cnt != 0xFFFFu) {
-    pc = static_cast<u32>(static_cast<s32>(pc) + disp);
+    pc = static_cast<u32>(static_cast<s32>(dispAddr) + disp);
     cycles += 10;
 } else {
     cycles += 14;
@@ -1139,52 +1122,19 @@ if (g6dbg < 10) {
     const u32 byteField = op & 0xFF;
 
 
-// DBcc
-if ((op & 0x00F8) == 0x00C8) {
-
-    s32 dbdisp = sext16(fetch16());
-    const u32 reg = op & 7;
-
-    if (testCC(cc)) {
-        cycles += 12;
-        return;
-    }
-
-    u16 count =
-        static_cast<u16>(d[reg] & 0xFFFF);
-
-    count--;
-
-    d[reg] =
-        (d[reg] & 0xFFFF0000u) | count;
-
-
-    if (count != 0xFFFF) {
-
-        pc = static_cast<u32>(
-            static_cast<s32>(pc) + dbdisp
-        );
-
-        cycles += 10;
-    }
-    else {
-        cycles += 14;
-    }
-
-    return;
-}
-
-
     // BRA
     if (cc == 0) {
 
         s32 disp = sext8(byteField);
+        u32 base = pc;
 
-        if (byteField == 0)
+        if (byteField == 0) {
+            base = pc;              // address of the displacement word
             disp = sext16(fetch16());
+        }
 
         pc = static_cast<u32>(
-            static_cast<s32>(pc) + disp
+            static_cast<s32>(base) + disp
         );
 
         cycles += 10;
@@ -1196,15 +1146,18 @@ if ((op & 0x00F8) == 0x00C8) {
     if (cc == 1) {
 
         s32 disp = sext8(byteField);
+        u32 base = pc;
 
-        if (byteField == 0)
+        if (byteField == 0) {
+            base = pc;              // address of the displacement word
             disp = sext16(fetch16());
+        }
 
         a[7] -= 4;
-        bus->write32(a[7], pc);
+        bus->write32(a[7], pc);     // return address = address after the full instruction (post-fetch pc)
 
         pc = static_cast<u32>(
-            static_cast<s32>(pc) + disp
+            static_cast<s32>(base) + disp
         );
 
         cycles += 18;
@@ -1214,15 +1167,17 @@ if ((op & 0x00F8) == 0x00C8) {
 
     // Bcc
     s32 disp = sext8(byteField);
+    u32 base = pc;
 
-    if (byteField == 0)
+    if (byteField == 0) {
+        base = pc;                  // address of the displacement word
         disp = sext16(fetch16());
-
+    }
 
     if (testCC(cc)) {
 
         pc = static_cast<u32>(
-            static_cast<s32>(pc) + disp
+            static_cast<s32>(base) + disp
         );
 
         cycles += 10;
