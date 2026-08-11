@@ -24,12 +24,7 @@ void M68K::reset() {
     std::memset(a, 0, sizeof(a));
     a[7]    = bus->read32(0);   // SSP from vector table
     pc      = bus->read32(4);   // Initial PC from vector table
-	printf(
-    "RESET SP=%08X PC=%08X\n",
-    a[7],
-    pc
-);
-    sr      = 0x2700;           // Supervisor, IPL=7
+	    sr      = 0x2700;           // Supervisor, IPL=7
     stopped = false;
     usp     = 0;
     cycles  = 0;
@@ -63,11 +58,7 @@ u32 M68K::readDn(u32 n, u32 sz) {
 
 void M68K::writeDn(u32 n, u32 v, u32 sz) {
 
-    printf(
-        "WRITE D%u size=%u val=%08X PC=%06X\n",
-        n, sz, v, pc-2
-    );
-
+    
     if      (sz == 0) d[n] = (d[n] & 0xFFFFFF00u) | (v & 0xFFu);
 else if (sz == 1)
     d[n] = (d[n] & 0xFFFF0000u) | (v & 0xFFFFu);
@@ -144,27 +135,19 @@ u32 M68K::calcEA(u32 mode, u32 reg, u32 sz) {
 u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
 
     if (mode == 7 && reg == 4) {
-        printf(
-            "IMM READ BEFORE PC=%06X size=%u\n",
-            pc,
-            sz
-        );
-
+        
         if (sz == 0) {
             u32 v = fetch16() & 0xFFu;
-            printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
-            return v;
+                        return v;
         }
 
         if (sz == 1) {
             u32 v = fetch16();
-            printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
-            return v;
+                        return v;
         }
 
         u32 v = fetch32();
-        printf("IMM VALUE=%08X AFTER PC=%06X\n", v, pc);
-        return v;
+                return v;
     }
 
     if (mode == 0) return readDn(reg, sz);
@@ -173,15 +156,7 @@ u32 M68K::readEA(u32 mode, u32 reg, u32 sz) {
     u32 ea = calcEA(mode, reg, sz);
     u32 value = bus->readSize(ea, sz);
 
-    printf(
-        "READEA mode=%u reg=%u sz=%u ea=%08X value=%08X\n",
-        mode,
-        reg,
-        sz,
-        ea,
-        value
-    );
-
+    
     return value;
 }
 
@@ -194,21 +169,9 @@ void M68K::writeEA(u32 mode, u32 reg, u32 val, u32 sz) {
         return;
     }
 
-    printf(
-        "WRITEEA mode=%u reg=%u PC(before)=%06X\n",
-        mode,
-        reg,
-        pc
-    );
-
+    
     if (mode == 1) {
-        printf(
-            "WRITE A%u = %08X PC=%06X\n",
-            reg,
-            val,
-            pc-2
-        );
-        a[reg] = val;
+                a[reg] = val;
         return;
     }
 
@@ -220,12 +183,39 @@ void M68K::writeEA(u32 mode, u32 reg, u32 val, u32 sz) {
 
     u32 ea = calcEA(mode, reg, eaSz);
 
-    printf(
-        "WRITEEA EA=%08X PC(afterEA)=%06X\n",
-        ea,
-        pc
-    );
+    
+    bus->writeSize(ea, val, sz);
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Read-modify-write helpers
+//
+// readEA()/writeEA() each call calcEA() independently. For simple reads or
+// writes that's fine, but any op that reads a destination, transforms it,
+// and writes it back was calling calcEA() TWICE for the same operand:
+//   - (An)+ / -(An): the address register got stepped twice per instruction
+//   - d16(An), d8(An,Xn), d16(PC), d8(PC,Xn), Absolute: the extension
+//     word(s) got fetched twice, over-advancing pc and corrupting the
+//     instruction stream from that point on
+//
+// These helpers compute the EA once and hand it back so the paired write
+// reuses it. Register-direct modes (0=Dn, 1=An) never touch calcEA at all,
+// so they're marked with sentinel ea values instead.
+// ─────────────────────────────────────────────────────────────────────────────
+static constexpr u32 RMW_EA_DN = 0xFFFFFFFFu;
+static constexpr u32 RMW_EA_AN = 0xFFFFFFFEu;
+
+u32 M68K::_rmwRead(u32 mode, u32 reg, u32 sz, u32& ea) {
+    if (mode == 0) { ea = RMW_EA_DN; return readDn(reg, sz); }
+    if (mode == 1) { ea = RMW_EA_AN; return a[reg]; }
+    ea = calcEA(mode, reg, sz);
+    return bus->readSize(ea, sz);
+}
+
+void M68K::_rmwWrite(u32 mode, u32 reg, u32 sz, u32 ea, u32 val) {
+    if (ea == RMW_EA_DN) { writeDn(reg, val, sz); return; }
+    if (ea == RMW_EA_AN) { a[reg] = val; return; }
+    (void)mode;
     bus->writeSize(ea, val, sz);
 }
 
@@ -340,13 +330,7 @@ bool M68K::testCC(u32 cc) {
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::exception(u32 vector)
 {
-    printf(
-        "EXCEPTION %u PC=%08X SR=%04X\n",
-        vector,
-        pc,
-        sr
-    );
-
+    
     a[7] -= 6;
 
     bus->write16(a[7], sr);
@@ -356,11 +340,7 @@ void M68K::exception(u32 vector)
 
     pc = bus->read32(vector * 4u);
 
-    printf(
-        "EXCEPTION NEW PC=%08X\n",
-        pc
-    );
-
+    
     cycles += 34;
 }
 
@@ -368,11 +348,6 @@ bool M68K::interrupt(u32 level)
 {
     const u32 ipl = (sr >> 8) & 7u;
 
-printf(
-    "INT TRY level=%u IPL=%u\n",
-    level,
-    (sr >> 8)&7
-);
 
     if (level <= ipl && level != 7u)
         return false;
@@ -391,13 +366,7 @@ bus->write32(a[7] + 2, pc);
 
     const u32 vector = bus->read32((24u + level) * 4u);
 
-    printf(
-        "INTERRUPT level=%u vector=%08X oldPC=%08X\n",
-        level,
-        vector,
-        pc
-    );
-
+    
     pc = vector;
 
     cycles += 44;
@@ -408,67 +377,12 @@ bus->write32(a[7] + 2, pc);
 // Main decode / execute
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::step() {
-
-    if (stopped) { 
-        cycles += 4; 
-        return; 
+    if (stopped) {
+        cycles += 4;
+        return;
     }
 
-    const u32 fetchPC = pc;
     u16 op = fetch16();
-
-    printf(
-        "FETCH PC=%08X OP=%04X SP=%08X\n",
-        fetchPC,
-        op,
-        a[7]
-    );
-
-    static int trace = 0;
-
-    if (trace < 200) {
-        printf(
-            "CPU STEP PC=%08X OP=%04X SR=%04X SP=%08X\n",
-            fetchPC,
-            op,
-            sr,
-            a[7]
-        );
-        trace++;
-    }
-
-    static int bootTrace = 0;
-
-    if (bootTrace < 100) {
-        printf(
-            "BOOT PC=%08X OP=%04X SP=%08X\n",
-            fetchPC,
-            op,
-            a[7]
-        );
-        bootTrace++;
-    }
-
-    if (fetchPC >= 0x5D0 && fetchPC <= 0x5F0)
-    {
-        printf(
-            "TRACE PC=%08X OP=%04X A0=%08X A1=%08X D0=%08X\n",
-            fetchPC,
-            op,
-            a[0],
-            a[1],
-            d[0]
-        );
-    }
-
-    static bool printed = false;
-
-    if (!printed) {
-        printf("PC=%08X OP=%04X\n", fetchPC, op);
-        printed = true;
-    }
-
-u32 beforePC = fetchPC;
 
     switch ((op >> 12) & 0xF) {
         case 0x0:
@@ -506,11 +420,6 @@ u32 beforePC = fetchPC;
             break;
 
         case 0xA:
-            printf(
-                "LINEA PC=%08X OP=%04X\n",
-                fetchPC,
-                op
-            );
             exception(10);
             break;
 
@@ -530,34 +439,16 @@ u32 beforePC = fetchPC;
             _gE(op);
             break;
 
-case 0xF:
-    printf(
-        "LINEF PC=%08X OP=%04X D0=%08X A0=%08X SP=%08X\n",
-        fetchPC,
-        op,
-        d[0],
-        a[0],
-        a[7]
-    );
-
-    printf("HALTING AFTER FIRST LINEF\n");
-    stopped = true;
-    return;
+        case 0xF:
+            // TODO: real F-line (coprocessor/unimplemented) dispatch —
+            // currently halts the CPU on the first F-line opcode encountered
+            // rather than raising exception(11) like a real 68000 would.
+            stopped = true;
+            return;
 
         default:
             exception(11);
             break;
-    }
-
-
-    if (pc != fetchPC + 2) {
-        printf(
-            "PC CHANGE %08X -> %08X after OP=%04X SP=%08X\n",
-            fetchPC,
-            pc,
-            op,
-            a[7]
-        );
     }
 }
 
@@ -604,9 +495,12 @@ void M68K::_g0(u16 op) {
     // Dynamic bit ops: bit 8 = 1, not MOVEP
     if ((op & 0x0100u) && (b11_8 & 1u)) {
         const u32 typ = (op >> 6) & 3u;
-        const u32 v   = readEA(srcMode, srcReg, 0);
+        u32 ea;
+        const u32 v   = _rmwRead(srcMode, srcReg, 0, ea);
         const u32 num = d[dstReg] & (srcMode == 0 ? 31u : 7u);
-        _doBitOp(typ, num, srcMode, srcReg, v);
+        bool doWrite;
+        const u32 nv = _doBitOp(typ, num, v, doWrite);
+        if (doWrite) _rmwWrite(srcMode, srcReg, 0, ea, nv);
         cycles += 6; return;
     }
 
@@ -629,43 +523,29 @@ const u32 sz = (op >> 6) & 3u;
    switch (b11_8) {
 case 0x0: { // ORI
     const u32 i = IMM(sz);
-
-    if (srcMode >= 2 && srcMode <= 6) {
-        const u32 ea = calcEA(srcMode, srcReg, sz);
-        const u32 v  = bus->readSize(ea, sz) | i;
-        bus->writeSize(ea, v, sz);
-        setNZVC(v, sz);
-    } else {
-        const u32 v = readEA(srcMode, srcReg, sz) | i;
-        writeEA(srcMode, srcReg, v, sz);
-        setNZVC(v, sz);
-    }
-
+    u32 ea;
+    const u32 v = _rmwRead(srcMode, srcReg, sz, ea) | i;
+    _rmwWrite(srcMode, srcReg, sz, ea, v);
+    setNZVC(v, sz);
     cycles += 8;
     break;
 }
-        case 0x2: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)&i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // ANDI
-        case 0x4: { const u32 i=IMM(sz), r=doSub(i,readEA(srcMode,srcReg,sz),sz,false); writeEA(srcMode,srcReg,r,sz); cycles+=8; break; }  // SUBI
-        case 0x6: { const u32 i=IMM(sz), r=doAdd(i,readEA(srcMode,srcReg,sz),sz,false); writeEA(srcMode,srcReg,r,sz); cycles+=8; break; }  // ADDI
+        case 0x2: { const u32 i=IMM(sz); u32 ea; const u32 v=_rmwRead(srcMode,srcReg,sz,ea)&i; _rmwWrite(srcMode,srcReg,sz,ea,v); setNZVC(v,sz); cycles+=8; break; } // ANDI
+        case 0x4: { const u32 i=IMM(sz); u32 ea; const u32 r=doSub(i,_rmwRead(srcMode,srcReg,sz,ea),sz,false); _rmwWrite(srcMode,srcReg,sz,ea,r); cycles+=8; break; }  // SUBI
+        case 0x6: { const u32 i=IMM(sz); u32 ea; const u32 r=doAdd(i,_rmwRead(srcMode,srcReg,sz,ea),sz,false); _rmwWrite(srcMode,srcReg,sz,ea,r); cycles+=8; break; }  // ADDI
         case 0x8: {                                                          // BTST/BCHG/BCLR/BSET static
             const u32 num=fetch16()&(srcMode==0?31u:7u), typ=(op>>6)&3u;
-            _doBitOp(typ, num, srcMode, srcReg, readEA(srcMode,srcReg,0)); cycles+=8; break;
+            u32 ea;
+            const u32 v = _rmwRead(srcMode, srcReg, 0, ea);
+            bool doWrite;
+            const u32 nv = _doBitOp(typ, num, v, doWrite);
+            if (doWrite) _rmwWrite(srcMode, srcReg, 0, ea, nv);
+            cycles+=8; break;
         }
-        case 0xA: { const u32 i=IMM(sz), v=readEA(srcMode,srcReg,sz)^i;  writeEA(srcMode,srcReg,v,sz); setNZVC(v,sz); cycles+=8; break; } // EORI
+        case 0xA: { const u32 i=IMM(sz); u32 ea; const u32 v=_rmwRead(srcMode,srcReg,sz,ea)^i; _rmwWrite(srcMode,srcReg,sz,ea,v); setNZVC(v,sz); cycles+=8; break; } // EORI
         case 0xC: {
     const u32 i = IMM(sz);
     const u32 dst = readEA(srcMode, srcReg, sz);
-
-doCmp(i,dst,sz);
-
-printf(
-"CMPI PC=%06X src=%08X dst=%08X Z=%d\n",
-pc,
-i,
-dst,
-(sr & 4) ? 1 : 0
-);
-
     doCmp(i, dst, sz);
     cycles += 8;
     break;
@@ -683,14 +563,7 @@ void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*
         case 0x0: { 
             const u16 i = static_cast<u16>(fetch16());
 
-            printf(
-                "G0 SPECIAL ORI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
-                op,
-                i,
-                sr,
-                pc
-            );
-
+            
             if(op & 0x40u) sr = static_cast<u16>(sr | (i & 0xA71Fu)); 
             else           sr = static_cast<u16>(sr | (i & 0x1Fu)); 
             cycles += 20; 
@@ -700,14 +573,7 @@ void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*
         case 0x2: { 
             const u16 i = static_cast<u16>(fetch16());
 
-            printf(
-                "G0 SPECIAL ANDI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
-                op,
-                i,
-                sr,
-                pc
-            );
-
+            
             if(op & 0x40u) sr = static_cast<u16>(sr & (i & 0xA71Fu)); 
             else           sr = static_cast<u16>((sr & ~0x1Fu) | (i & 0x1Fu)); 
             cycles += 20; 
@@ -717,14 +583,7 @@ void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*
         case 0xA: { 
             const u16 i = static_cast<u16>(fetch16());
 
-            printf(
-                "G0 SPECIAL EORI op=%04X imm=%04X oldSR=%04X PC=%08X\n",
-                op,
-                i,
-                sr,
-                pc
-            );
-
+            
             if(op & 0x40u) sr = static_cast<u16>(sr ^ (i & 0xA71Fu)); 
             else           sr = static_cast<u16>(sr ^ (i & 0x1Fu)); 
             cycles += 20; 
@@ -733,7 +592,7 @@ void M68K::_g0Special(u16 op, u32 b11_8, u32 /*srcMode*/, u32 /*srcReg*/, u32 /*
     }
 }
 
-void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
+u32 M68K::_doBitOp(u32 typ, u32 num, u32 v, bool& doWrite) {
     const u32 mask = 1u << num;
     const bool bitSet = (v & mask) != 0u;
 
@@ -742,16 +601,14 @@ void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
     if (!bitSet) ns |= 0x04u;
     sr = ns;
 
-    if (typ == 0) return; // BTST: Just test the bit, don't write back
+    if (typ == 0) { doWrite = false; return v; } // BTST: test only, no write back
 
-    u32 nv;
+    doWrite = true;
     switch (typ) {
-        case 1: nv = v ^ mask; break;  // BCHG (Change/Toggle)
-        case 2: nv = v & ~mask; break; // BCLR (Clear)
-        default: nv = v | mask; break; // BSET (Set)
+        case 1: return v ^ mask;  // BCHG (Change/Toggle)
+        case 2: return v & ~mask; // BCLR (Clear)
+        default: return v | mask; // BSET (Set)
     }
-    
-    writeEA(mode, reg, nv, 0); // Write the modified byte back to memory/register
 }
 
 
@@ -759,12 +616,6 @@ void M68K::_doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v) {
 // Groups 1/2/3: MOVE / MOVEA
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_gMOVE(u16 op) {
-	static int moveDump = 0;
-
-if (moveDump < 50) {
-    printf("MOVE OPCODE %04X PC=%08X\n", op, pc - 2);
-    moveDump++;
-}
     // M68K MOVE: 0000 ddd s ss aaaa
 const u32 group = (op >> 12) & 0xFu;
 
@@ -779,16 +630,6 @@ const u32 srcReg  = op & 7u;
 const u32 dstMode = (op >> 6) & 7u;
 const u32 dstReg  = (op >> 9) & 7u;
 
-printf(
-    "MOVE decode PC=%06X op=%04X srcMode=%u srcReg=%u dstMode=%u dstReg=%u size=%u\n",
-    pc-2,
-    op,
-    srcMode,
-    srcReg,
-    dstMode,
-    dstReg,
-    sz
-);
 
 const u32 val = readEA(srcMode, srcReg, sz);
 
@@ -802,16 +643,7 @@ if (dstMode == 1 && group != 1)
 }
 else
 {
-    printf(
-    "MOVE WRITE srcMode=%u srcReg=%u dstMode=%u dstReg=%u val=%08X sz=%u\n",
-    srcMode,
-    srcReg,
-    dstMode,
-    dstReg,
-    val,
-    sz
-    );
-
+    
     writeEA(dstMode, dstReg, val, sz);
     setNZVC(val, sz);
 }
@@ -830,15 +662,7 @@ void M68K::_g4(u16 op) {
 	if ((op&0x01C0u)==0x01C0u) {                                   // LEA
     u32 ea = calcEA(mode,reg,2);
 
-    printf(
-        "LEA mode=%u reg=%u -> A%u = %08X PC=%08X\n",
-        mode,
-        reg,
-        dstReg,
-        ea,
-        pc
-    );
-
+    
     a[dstReg] = ea;
     cycles+=4;
     return;
@@ -847,15 +671,19 @@ void M68K::_g4(u16 op) {
     switch (b11_8) {
         case 0x0: {
             if (sz == 3) { writeEA(mode,reg,sr,1); cycles+=6; return; }   // MOVE SR→EA
-            const u32 r = doSub(readEA(mode,reg,sz), 0u, sz, true);       // NEGX
-            writeEA(mode,reg,r,sz); cycles+=6; return;
+            u32 ea;
+            const u32 v = _rmwRead(mode, reg, sz, ea);
+            const u32 r = doSub(v, 0u, sz, true);       // NEGX
+            _rmwWrite(mode, reg, sz, ea, r); cycles+=6; return;
         }
         case 0x2: {
             if (sz == 3) {                                                  // MOVE #→CCR (immediate form: ANDI/ORI/EORI use group 0)
                 sr = static_cast<u16>((sr & ~0x1Fu) | (fetch16() & 0x1Fu));
                 cycles+=20; return;
             }
-            readEA(mode,reg,sz); writeEA(mode,reg,0,sz);                   // CLR
+            u32 ea;
+            _rmwRead(mode, reg, sz, ea);                                  // CLR (value discarded, EA computed once)
+            _rmwWrite(mode, reg, sz, ea, 0u);
             sr = static_cast<u16>((sr & ~0x0Fu) | 0x04u);
             cycles+=4; return;
         }
@@ -865,8 +693,10 @@ case 0x4: {
         cycles += 20;
         return;
     }
-    const u32 r = doSub(readEA(mode,reg,sz), 0u, sz, false);   // NEG
-    writeEA(mode,reg,r,sz); cycles+=6; return;
+    u32 ea;
+    const u32 v = _rmwRead(mode, reg, sz, ea);
+    const u32 r = doSub(v, 0u, sz, false);   // NEG
+    _rmwWrite(mode, reg, sz, ea, r); cycles+=6; return;
 }
 case 0x6: {
     if (sz == 3) {
@@ -874,16 +704,18 @@ case 0x6: {
         sr = static_cast<u16>(readEA(mode, reg, 1) & 0xA71Fu);
         cycles += 20; return;
     }
-    const u32 v = ~readEA(mode,reg,sz);   // NOT
-    writeEA(mode,reg,v,sz); setNZVC(v,sz); cycles+=4; return;
+    u32 ea;
+    const u32 v = ~_rmwRead(mode, reg, sz, ea);   // NOT
+    _rmwWrite(mode, reg, sz, ea, v); setNZVC(v,sz); cycles+=4; return;
 }
         case 0x8: {
             if (sz == 0) {                                                  // NBCD
-                const u32 v=readEA(mode,reg,0), x=(sr>>4)&1u;
+                u32 ea;
+                const u32 v=_rmwRead(mode,reg,0,ea), x=(sr>>4)&1u;
                 u32 r = (0x100u - v - x) & 0xFFu;
                 bool c = (v|x) != 0u;
                 if (!(r&0xFu) && !(v&0xFu) && !x) { r=0; c=false; }
-                writeEA(mode,reg,r,0);
+                _rmwWrite(mode,reg,0,ea,r);
                 u16 ns = sr & ~0x15u;
                 if (c) ns|=0x11u; if (!r) ns|=0x04u;
                 sr=ns; cycles+=6; return;
@@ -978,12 +810,7 @@ case 0x75:
     u32 oldsp = a[7];
     u32 ret = bus->read32(a[7]);
 
-    printf(
-        "RTS SP=%08X RET=%08X\n",
-        oldsp,
-        ret
-    );
-
+    
     pc = ret;
     a[7]+=4;
     cycles+=16;
@@ -1094,10 +921,10 @@ if (cnt != 0xFFFFu) {
 
     if ((op>>8)&1u) {   // SUBQ
         if (mode==1) a[reg]-=imm;
-        else writeEA(mode,reg, doSub(imm,readEA(mode,reg,sz),sz,false), sz);
+        else { u32 ea; const u32 v=_rmwRead(mode,reg,sz,ea); _rmwWrite(mode,reg,sz,ea, doSub(imm,v,sz,false)); }
     } else {            // ADDQ
         if (mode==1) a[reg]+=imm;
-        else writeEA(mode,reg, doAdd(imm,readEA(mode,reg,sz),sz,false), sz);
+        else { u32 ea; const u32 v=_rmwRead(mode,reg,sz,ea); _rmwWrite(mode,reg,sz,ea, doAdd(imm,v,sz,false)); }
     }
     cycles+=4;
 }
@@ -1107,16 +934,6 @@ if (cnt != 0xFFFFu) {
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_g6(u16 op)
 {
-static int g6dbg = 0;
-
-if (g6dbg < 10) {
-    printf(
-        "G6 HIT PC=%06X OP=%04X\n",
-        pc-2,
-        op
-    );
-    g6dbg++;
-}
 
     const u32 cc=(op>>8)&0xF;
     const u32 byteField = op & 0xFF;
@@ -1239,7 +1056,7 @@ void M68K::_g8(u16 op) {
     }
 
     // OR
-    if ((op&0x100u)&&mode>1u) { const u32 r=readEA(mode,reg,sz)|readDn(dn,sz); writeEA(mode,reg,r,sz); setNZVC(r,sz); }
+    if ((op&0x100u)&&mode>1u) { u32 ea; const u32 r=_rmwRead(mode,reg,sz,ea)|readDn(dn,sz); _rmwWrite(mode,reg,sz,ea,r); setNZVC(r,sz); }
     else                       { const u32 r=readDn(dn,sz)|readEA(mode,reg,sz); writeDn(dn,r,sz);       setNZVC(r,sz); }
     cycles+=4;
 }
@@ -1264,7 +1081,7 @@ void M68K::_g9(u16 op) {
         if (rm) bus->writeSize(a[dn],r,sz); else writeDn(dn,r,sz);
         cycles+=4; return;
     }
-    if (dir) { writeEA(mode,reg, doSub(readDn(dn,sz),readEA(mode,reg,sz),sz,false), sz); }
+    if (dir) { u32 ea; const u32 v=_rmwRead(mode,reg,sz,ea); _rmwWrite(mode,reg,sz,ea, doSub(readDn(dn,sz),v,sz,false)); }
     else     { writeDn(dn,        doSub(readEA(mode,reg,sz),readDn(dn,sz),sz,false), sz); }
     cycles+=4;
 }
@@ -1284,8 +1101,9 @@ void M68K::_gB(u16 op) {
         if (mode==1u) {   // CMPM (An)+,(An)+
             doCmp(readEA(3,reg,sz), readEA(3,dn,sz), sz); cycles+=12; return;
         }
-        const u32 v=readEA(mode,reg,sz)^readDn(dn,sz);   // EOR Dn→EA
-        writeEA(mode,reg,v,sz); setNZVC(v,sz); cycles+=4; return;
+        u32 ea;
+        const u32 v=_rmwRead(mode,reg,sz,ea)^readDn(dn,sz);   // EOR Dn→EA
+        _rmwWrite(mode,reg,sz,ea,v); setNZVC(v,sz); cycles+=4; return;
     }
     doCmp(readEA(mode,reg,sz), readDn(dn,sz), sz); cycles+=4;   // CMP EA→Dn
 }
@@ -1325,7 +1143,7 @@ void M68K::_gC(u16 op) {
         cycles+=6; return;
     }
     // AND
-    if (dir&&mode>1u){ const u32 r=readEA(mode,reg,sz)&readDn(dn,sz); writeEA(mode,reg,r,sz); setNZVC(r,sz); }
+    if (dir&&mode>1u){ u32 ea; const u32 r=_rmwRead(mode,reg,sz,ea)&readDn(dn,sz); _rmwWrite(mode,reg,sz,ea,r); setNZVC(r,sz); }
     else             { const u32 r=readDn(dn,sz)&readEA(mode,reg,sz); writeDn(dn,r,sz);       setNZVC(r,sz); }
     cycles+=4;
 }
@@ -1350,7 +1168,7 @@ void M68K::_gD(u16 op) {
         if (rm) bus->writeSize(a[dn],r,sz); else writeDn(dn,r,sz);
         cycles+=4; return;
     }
-    if (dir) { writeEA(mode,reg, doAdd(readDn(dn,sz),readEA(mode,reg,sz),sz,false), sz); }
+    if (dir) { u32 ea; const u32 v=_rmwRead(mode,reg,sz,ea); _rmwWrite(mode,reg,sz,ea, doAdd(readDn(dn,sz),v,sz,false)); }
     else     { writeDn(dn,        doAdd(readEA(mode,reg,sz),readDn(dn,sz),sz,false), sz); }
     cycles+=4;
 }
@@ -1367,8 +1185,9 @@ void M68K::_gE(u16 op) {
     if (sz == 3) {
         // Memory shift/rotate: type is in bits 11–10 (JS had a bug reading bits 4–3)
         const u32 type = (op>>10)&3u;
-        const u32 v    = readEA(mode,reg,1);
-        writeEA(mode,reg, _doShift(type,left,v,1,1), 1);
+        u32 ea;
+        const u32 v = _rmwRead(mode, reg, 1, ea);
+        _rmwWrite(mode, reg, 1, ea, _doShift(type,left,v,1,1));
         cycles+=8; return;
     }
 
@@ -1379,17 +1198,7 @@ void M68K::_gE(u16 op) {
     const bool byReg = (op>>5)&1u;
     const u32 cnt    = byReg ? (d[(op>>9)&7u]&63u)
                              : (((op>>9)&7u) ? (op>>9)&7u : 8u);
-							 printf(
-    "SHIFT op=%04X type=%u left=%d cnt=%u size=%u D%u=%08X\n",
-    op,
-    type,
-    left,
-    cnt,
-    sz,
-    reg,
-    d[reg]
-);
-    const u32 r = _doShift(type, left, readDn(reg,sz), cnt, sz);
+							     const u32 r = _doShift(type, left, readDn(reg,sz), cnt, sz);
     writeDn(reg,r,sz);
     cycles += 4u + cnt*2u;
 }
@@ -1460,30 +1269,9 @@ u32 M68K::_doShift(u32 type, bool left, u32 v, u32 cnt, u32 sz) {
 // Run loop
 // ─────────────────────────────────────────────────────────────────────────────
 u32 M68K::run(u32 targetCycles) {
-
-    static bool once = false;
-
-    if (!once) {
-        printf("M68K RUN IS RUNNING\n");
-        once = true;
+    while (cycles < targetCycles) {
+        step();
     }
-
-    while (cycles < targetCycles)
-{
-    step();
-
-    static int dbg = 0;
-    if (++dbg == 100000)
-    {
-        printf(
-            "CPU RUN STUCK cycles=%u target=%u PC=%08X\n",
-            cycles,
-            targetCycles,
-            pc
-        );
-        dbg = 0;
-    }
-}
 
     const u32 overshoot = cycles - targetCycles;
     cycles = 0;

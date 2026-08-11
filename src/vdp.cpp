@@ -103,12 +103,7 @@ void GenVDP::write8(u32 off, u8 val) {
 void GenVDP::write16(u32 off, u16 val) {
     off &= 0x1Fu;
 
-    printf(
-        "VDP WRITE16 off=%02X val=%04X\n",
-        off,
-        val
-    );
-    switch (off & 0xFEu) {
+        switch (off & 0xFEu) {
         case 0x00:
         case 0x02: _writeData(val);        break;
         case 0x04:
@@ -144,8 +139,7 @@ u16 GenVDP::_status() {
 //   Two consecutive byte writes form a register write word.
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_writeCtrl(u16 val, bool isByte) {
-	printf("CTRL WRITE %04X byte=%d\n", val, isByte ? 1 : 0);
-    if (isByte) {
+	    if (isByte) {
         if (!ctrlPendByte) {
             ctrlFirst    = static_cast<u16>(val & 0xFFu);
             ctrlPendByte = true;
@@ -164,7 +158,6 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         if (r < GEN_VDP_REG_COUNT) {
             regs[r] = v;
 
-printf("VDP REG WRITE R%02u=%02X\n", r, v);
             if (r == 15) addrInc = v;
         }
         return;
@@ -180,20 +173,7 @@ cdReg = static_cast<u8>(
     | ((w2 >> 6)  & 0x20)
 );
         addrReg = static_cast<u32>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
-		printf(
-    "VDP CMD w1=%04X w2=%04X addr=%05X cd=%02X\n",
-    w1,
-    w2,
-    addrReg,
-    cdReg
-);
-printf(
-    "DATA addr=%05X cd=%02X val=%04X\n",
-    addrReg,
-    cdReg,
-    val
-);
-
+		
         if (cdReg & 0x20u) {
             const u32 dmaMode = (regs[23] >> 6) & 3u;
             if (dmaMode == 2) dmaFillPending = true; 
@@ -249,13 +229,7 @@ void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
     const u16 addr = addrReg;
 
     if ((cd & 0x0F) == 1) {
-		printf(
-    "VRAM WRITE addr=%04X val=%02X cd=%02X\n",
-    (addr + bytePos) & 0xFFFF,
-    val,
-    cd
-);
-        vram[(addr + bytePos) & 0xFFFFu] = val;
+		        vram[(addr + bytePos) & 0xFFFFu] = val;
     } else if (cd == 3) {
         u16 current = cram[(addr >> 1) & 0x3Fu];
         if (bytePos == 0) current = (current & 0x00FF) | (val << 8);
@@ -359,18 +333,6 @@ addrReg = (addrReg + 1u) & 0xFFFFu;
 // Scanline timing hooks
 // ─────────────────────────────────────────────────────────────────────────────
 bool GenVDP::tickLine(u32 line, bool pal) {
-    static bool once = false;
-
-    if (!once) {
-        printf(
-            "tickLine called PAL=%d active=%u line=%u\n",
-            pal,
-            pal ? PAL_ACTIVE : NTSC_ACTIVE,
-            line
-        );
-        once = true;
-    }
-
     vcounter = static_cast<u16>(line);
     const u32 activeH = pal ? PAL_ACTIVE : NTSC_ACTIVE;
     vblank = (line >= activeH);
@@ -379,18 +341,9 @@ bool GenVDP::tickLine(u32 line, bool pal) {
 
     const bool doVBlank = (line == activeH);
 
-if (doVBlank) {
-    vintPending = true;
-
-    static int vbdbg = 0;
-    if (vbdbg < 5) {
-        printf(
-            "VBLANK tick line=%u\n",
-            line
-        );
-        vbdbg++;
+    if (doVBlank) {
+        vintPending = true;
     }
-}
 
     // Note: frame counter is incremented by Genesis::runFrame, not here
     return doVBlank;

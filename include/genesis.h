@@ -162,8 +162,10 @@ private:
     u32  readDn (u32 n, u32 sz);
     void writeDn(u32 n, u32 v, u32 sz);
     u32  calcEA (u32 mode, u32 reg, u32 sz);
-    u32  readEA (u32 mode, u32 reg, u32 sz);
+u32  readEA (u32 mode, u32 reg, u32 sz);
     void writeEA(u32 mode, u32 reg, u32 val, u32 sz);
+    u32  _rmwRead (u32 mode, u32 reg, u32 sz, u32& ea);
+    void _rmwWrite(u32 mode, u32 reg, u32 sz, u32 ea, u32 val);
     void _masks(u32 sz, u32& mask, u32& msb);
     void setNZ  (u32 r, u32 sz);
     void setNZVC(u32 r, u32 sz);
@@ -173,7 +175,7 @@ private:
     bool testCC (u32 cc);
     void _g0(u16 op);
     void _g0Special(u16 op, u32 b11_8, u32 srcMode, u32 srcReg, u32 dstReg);
-	void _doBitOp(u32 typ, u32 num, u32 mode, u32 reg, u32 v);
+	u32  _doBitOp(u32 typ, u32 num, u32 v, bool& doWrite);
     void _gMOVE(u16 op);
     void _g4(u16 op);
     void _g4E(u16 op, u32 mode, u32 reg, u32 sz);

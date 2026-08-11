@@ -104,61 +104,23 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 // After all scanlines: push audio samples into the ring buffer.
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::runFrame() {
-for (u32 line = 0; line < linesFrame; line++) {
+    for (u32 line = 0; line < linesFrame; line++) {
 
-    static int dbgCount = 0;
+        if (!bus.z80Reset) {
+            z80.run(z80cpl);
+        }
 
-    if (!bus.z80Reset) {
-        z80.run(z80cpl);
-    }
+        const bool vblankStart = vdp.tickLine(line, isPAL);
 
-    const bool vblankStart = vdp.tickLine(line, isPAL);
+        const u32 lineStartCycles = cpu.cycles;
+        while (cpu.cycles < lineStartCycles + 488) {
+            cpu.step();
+        }
 
+        if (vblankStart && (vdp.regs[1] & 0x20u)) {
+            cpu.interrupt(6);
+        }
 
-    const u32 lineStartCycles = cpu.cycles;
-
-    while (cpu.cycles < lineStartCycles + 488) {
-        cpu.step();
-    }
-    // ------------------
-
-
-    if (vblankStart) {
-        printf(
-            "VBLANK HIT line=%u REG1=%02X\n",
-            line,
-            vdp.regs[1]
-        );
-    }
-
-if (vblankStart) {
-
-    static int irqdbg = 0;
-
-    if (irqdbg < 5) {
-        printf(
-            "VBLANK reached REG1=%02X\n",
-            vdp.regs[1]
-        );
-        irqdbg++;
-    }
-
-    if (vdp.regs[1] & 0x20u) {
-
-        printf(
-            "VBLANK IRQ6 frame=%u line=%u\n",
-            frame,
-            line
-        );
-
-        bool accepted = cpu.interrupt(6);
-
-printf(
-    "IRQ6 accepted=%d\n",
-    accepted
-);
-    }
-}
         if (vdp.checkHInt(line, isPAL)) {
             // H-INT enabled? (reg 0 bit 4)
             if (vdp.regs[0] & 0x10u) {
@@ -174,13 +136,6 @@ printf(
 
     vdp.frame++;
     frame++;
-
-static int dbg = 0;
-if (++dbg == 60) {
-    char buf[2048];
-    diagVideo(buf, sizeof(buf));
-    printf("%s\n", buf);
-}
 }   // end runFrame()
 
 

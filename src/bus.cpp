@@ -300,14 +300,7 @@ u32 GenBus::read32(u32 addr) {
     u32 hi = read16(addr);
     u32 lo = read16(addr + 2);
 
-    printf(
-        "READ32 addr=%06X hi=%04X lo=%04X result=%08X\n",
-        addr,
-        hi,
-        lo,
-        (hi << 16) | lo
-    );
-
+    
     return (hi << 16) | lo;
 }
 
@@ -317,17 +310,9 @@ u32 GenBus::read32(u32 addr) {
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::write8(u32 addr, u8 val) {
 
-    printf(
-        "BUS WRITE8 raw=%08X val=%02X\n",
-        addr,
-        val
-    );
-
+    
     const u32 a = addr;
 
-if (a >= 0xFF0000u) {
-    printf("WRAM WRITE8 %06X = %02X\n", a, val);
-}
 
     // YM2612  0xA04000–0xA04003
     if (a >= 0xA04000u && a <= 0xA04003u) {
@@ -402,10 +387,7 @@ if (a >= 0xFF0000u) {
 void GenBus::write16(u32 addr, u16 val) {
     const u32 a = addr & 0xFFFFFFu;
 	
-	if (a >= 0xC00000u && a < 0xC00020u) {
-    printf("BUS->VDP write16 %06X %04X\n", a, val);
-}
-
+	
     // WRAM fast path
     if (a >= 0xFF0000u) {
         const u32 wa = a & 0xFFFFu;

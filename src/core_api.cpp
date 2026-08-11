@@ -102,36 +102,6 @@ DING_EXPORT void ding_set_region(const char* region) {
 DING_EXPORT void ding_run_frame() {
     if (!s_gen) return;
     s_gen->runFrame();
-
-    static int dbgCount = 0;
-    if (++dbgCount == 60) {
-        char buf[1024];
-        s_gen->diagCPU(buf, sizeof(buf));
-        printf("%s\n", buf);
-		printf(
-    "PC=%08X SR=%04X D0=%08X A0=%08X\n",
-    s_gen->cpu.pc,
-    s_gen->cpu.sr,
-    s_gen->cpu.d[0],
-    s_gen->cpu.a[0]
-);
-
-        // What instruction is at the stuck PC?
-u16 w0 = s_gen->bus.read16(0x1200);
-u16 w1 = s_gen->bus.read16(0x1202);
-u16 w2 = s_gen->bus.read16(0x1204);
-u16 w3 = s_gen->bus.read16(0x1206);
-u16 w4 = s_gen->bus.read16(0x1208);
-u16 w5 = s_gen->bus.read16(0x120A);
-u16 w6 = s_gen->bus.read16(0x120C);
-u16 w7 = s_gen->bus.read16(0x120E);
-u16 w8 = s_gen->bus.read16(0x1210);
-u16 w9 = s_gen->bus.read16(0x1212);
-u16 wa = s_gen->bus.read16(0x1214);
-u16 wb = s_gen->bus.read16(0x1216);
-printf("1200: %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X %04X\n",
-    w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,wa,wb);
-    }
 }
 
 DING_EXPORT const DingCoreInfo* ding_get_core_info() {
