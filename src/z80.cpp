@@ -56,6 +56,43 @@ void GenZ80::run(u32 targetCycles) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Maskable interrupt
+//
+// The Genesis pulses the Z80's /INT line at VBlank (same moment as the M68K's
+// INT6), which is what the sound driver's sequencer ticks off. Genesis carts
+// don't implement a real daisy-chain device for IM2, so per common practice
+// the data bus is treated as pulled high (0xFF) during the interrupt
+// acknowledge cycle — matches real hardware behavior for this platform.
+// ─────────────────────────────────────────────────────────────────────────────
+bool GenZ80::interrupt() {
+    if (!IFF1) return false;
+
+    IFF1 = IFF2 = 0;
+    halted = false;
+    R = static_cast<u8>((R & 0x80u) | ((R + 1u) & 0x7Fu));
+
+    switch (IM) {
+        case 2: {
+            const u16 vecAddr = static_cast<u16>((static_cast<u16>(I) << 8) | 0xFFu);
+            const u16 vector  = static_cast<u16>(_read(vecAddr) | (_read(static_cast<u16>(vecAddr + 1u)) << 8));
+            _push16(PC);
+            PC = vector;
+            cycles += 19;
+            break;
+        }
+        case 0:
+        case 1:
+        default:
+            // IM0 with no device on the bus behaves like IM1 on this platform
+            _push16(PC);
+            PC = 0x0038u;
+            cycles += 13;
+            break;
+    }
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Memory / port access
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenZ80::_fetch() { return _read(PC++); }
@@ -565,13 +602,19 @@ static void execIndexed(GenZ80& z, u8 op, u16& idx) {
         return;
     }
 
-    // Dense LD r,r block (using IX replacement)
-    if (op >= 0x40u && op < 0x80u && op != 0x76u) {
+    // Dense LD r,r block (using IX replacement). Excludes any opcode that
+    // touches (HL)/(IX+d) as either operand -- those need a displacement
+    // byte fetched from the instruction stream, and are handled by the
+    // explicit LD r,(IX+d) / LD (IX+d),r cases further down. (Previously
+    // this block caught those too with a hardcoded disp=0 and never
+    // fetched the real displacement byte, desyncing the instruction stream
+    // on every single indexed load/store.)
+    if (op >= 0x40u && op < 0x80u && op != 0x76u &&
+        (op & 7u) != 6u && ((op >> 3) & 7u) != 6u) {
         const u8 src = get(op & 7u, 0);
         const u32 dst = (op >> 3) & 7u;
-        // Only fire if src or dst touches IXH/IXL/indirect
         setR(dst, src, 0);
-        z.cycles += ((op & 7u) == 6u || dst == 6u) ? 19u : 8u;
+        z.cycles += 8u;
         return;
     }
 
@@ -841,8 +884,12 @@ void GenZ80::_executeED(u8 op) {
                 { u16 bc=static_cast<u16>((B<<8)|C)-1; B=bc>>8; C=bc; }
                 cycles += 21;
                 if (!B && !C) break;
+                // Yield every 64 bytes, same as LDIR, so BC near 0 doesn't
+                // dominate a single run() slice and desync Z80/M68K/VDP timing
+                if (!(C & 0x3Fu) && !B) break;
             }
             if (!B && !C) { cycles -= 5; F=(F&(FS|FZ|FC)); }
+            else           { F=(F&(FS|FZ|FC))|FV; PC-=2; }
             break;
         }
         case 0xA1: {  // CPI
@@ -855,15 +902,22 @@ void GenZ80::_executeED(u8 op) {
             cycles+=16; break;
         }
         case 0xB1: {  // CPIR
+            u8 v = 0, r = 0;
             while (true) {
-                const u8 v=_read(HL()); const u8 r=A-v;
+                v=_read(HL()); r=A-v;
                 { u16 hl=static_cast<u16>((H<<8)|L)+1; H=hl>>8; L=hl; }
                 { u16 bc=static_cast<u16>((B<<8)|C)-1; B=bc>>8; C=bc; }
                 cycles+=21;
                 if (!r || (!B && !C)) break;
+                // Yield every 64 bytes, same rationale as LDIR
+                if (!(C & 0x3Fu) && !B) break;
             }
             if (B||C) PC-=2;
-            F=(F&FC)|FN; cycles -= (B||C)?0:5; break;
+            { const u8 n=r-((F&FH)?1u:0u);
+              F=(r&FS)|(r?0u:FZ)|((A&0xFu)<(v&0xFu)?FH:0u)
+               |(n&FX)|((n>>1)&FY)|FN|((B||C)?FV:0u)|(F&FC); }
+            cycles -= (B||C)?0:5;
+            break;
         }
         case 0xA3: {  // OUTI
             const u8 v=_read(HL()); _outPort(C,v);
@@ -917,15 +971,22 @@ void GenZ80::_executeED(u8 op) {
             cycles+=16; break;
         }
         case 0xB9: {  // CPDR
+            u8 v = 0, r = 0;
             while (true) {
-                const u8 v=_read(HL()); const u8 r=A-v;
+                v=_read(HL()); r=A-v;
                 { u16 hl=static_cast<u16>((H<<8)|L)-1; H=hl>>8; L=hl; }
                 { u16 bc=static_cast<u16>((B<<8)|C)-1; B=bc>>8; C=bc; }
                 cycles+=21;
                 if (!r || (!B && !C)) break;
+                // Yield every 64 bytes, same rationale as LDIR
+                if (!(C & 0x3Fu) && !B) break;
             }
             if (B||C) PC-=2;
-            F=(F&FC)|FN; cycles-=(B||C)?0:5; break;
+            { const u8 n=r-((F&FH)?1u:0u);
+              F=(r&FS)|(r?0u:FZ)|((A&0xFu)<(v&0xFu)?FH:0u)
+               |(n&FX)|((n>>1)&FY)|FN|((B||C)?FV:0u)|(F&FC); }
+            cycles -= (B||C)?0:5;
+            break;
         }
         default: cycles+=8; break;  // Unknown ED: two-byte NOP
     }

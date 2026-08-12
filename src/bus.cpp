@@ -14,6 +14,7 @@ GenBus::GenBus()
     , z80BusReq(false)
     , z80Reset(true)
     , z80Bank(0)
+    , isPAL(false)
     , vdp(nullptr)
     , z80(nullptr)
     , apu(nullptr)
@@ -146,7 +147,12 @@ u8 GenBus::_readPad(u32 pad) {
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenBus::_ioRead8(u32 addr) {
     switch (addr & 0x1Fu) {
-        case 0x01: return 0xA0u;        // version: overseas, NTSC, no TMSS
+        case 0x01: return static_cast<u8>(0x80u | (isPAL ? 0x40u : 0u));
+                                         // version: bit7=overseas(1)/domestic(0),
+                                         // bit6=PAL(1)/NTSC(0). Overseas+NTSC=0x80
+                                         // (USA), Overseas+PAL=0xC0. Domestic(Japan)
+                                         // would be 0x00/0x40, but this core targets
+                                         // an overseas (USA) console.
         case 0x03: return _readPad(0);
         case 0x05: return _readPad(1);
         case 0x07: return 0xFFu;        // expansion port (not connected)
@@ -251,9 +257,11 @@ u8 GenBus::read8(u32 addr) {
     if (a >= 0xA10000u && a < 0xA10020u)
         return _ioRead8(a);
 
-    // BUSREQ
+    // BUSREQ — bit0=1 means Z80 still running (bus not granted), bit0=0
+    // means granted. Grant is immediate in this model once requested (or
+    // trivially granted if the Z80 is already held in reset).
     if (a == 0xA11100u || a == 0xA11101u)
-        return 0;
+        return (z80BusReq || z80Reset) ? 0x00u : 0xFFu;
 
     // RESET
     if (a == 0xA11200u || a == 0xA11201u)
@@ -309,9 +317,7 @@ u32 GenBus::read32(u32 addr) {
 // YM2612 and PSG intercepts live here (replaces the JS monkey-patch).
 // ─────────────────────────────────────────────────────────────────────────────
 void GenBus::write8(u32 addr, u8 val) {
-
-    
-    const u32 a = addr;
+    const u32 a = addr & 0xFFFFFFu;
 
 
     // YM2612  0xA04000–0xA04003

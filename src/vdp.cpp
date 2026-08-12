@@ -167,13 +167,12 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         ctrlPendWord = false;
         const u16 w1 = ctrlFirst;
         const u16 w2 = val;
-cdReg = static_cast<u8>(
-      ((w1 >> 14) & 0x03)
-    | ((w2 >> 2)  & 0x30)
-    | ((w2 >> 6)  & 0x20)
-);
+        // CD1:CD0 = w1 bits 15:14, CD5:CD2 = w2 bits 7:4.
+        // (Previously CD2/CD3 were never sourced — always 0 — which made
+        // CRAM read (needs CD3) and VSRAM read (needs CD2) unreachable.)
+        cdReg = static_cast<u8>(((w1 >> 14) & 0x03u) | ((w2 >> 2) & 0x3Cu));
         addrReg = static_cast<u32>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
-		
+
         if (cdReg & 0x20u) {
             const u32 dmaMode = (regs[23] >> 6) & 3u;
             if (dmaMode == 2) dmaFillPending = true; 
@@ -374,9 +373,57 @@ void GenVDP::_renderLine(u32 line) {
 
 
 void GenVDP::_renderScanline(u32 y) {
-    _renderPlaneLine(true,  y);  // Plane B — drawn first (behind)
-    _renderPlaneLine(false, y);  // Plane A — drawn second (in front of B)
-    _renderSpriteLine(y);        // Sprites — drawn last (on top)
+    std::memset(lineA,   0, sizeof(lineA));
+    std::memset(lineB,   0, sizeof(lineB));
+    std::memset(lineSpr, 0, sizeof(lineSpr));
+
+    _renderPlaneLine(true,  y);  // Plane B
+    _renderPlaneLine(false, y);  // Plane A
+    _renderSpriteLine(y);        // Sprites
+
+    _compositeLine(y);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compositor — applies the fixed Genesis priority stack:
+//   backdrop < B(lo) < A(lo) < Spr(lo) < B(hi) < A(hi) < Spr(hi)
+// Reg 7 bits 3:0 select the backdrop CRAM entry (palette line 0's 16-entry
+// row is NOT implied — reg 7 indexes the full 64-entry CRAM directly via
+// bits 5:0, but only bits 3:0 are used on real hardware since the backdrop
+// is always drawn from palette line (reg7>>4)&3, index reg7&0xF).
+// ─────────────────────────────────────────────────────────────────────────────
+void GenVDP::_compositeLine(u32 y) {
+    const u32 backdropIdx = ((static_cast<u32>(regs[7]) >> 4) & 3u) * 16u
+                           + (regs[7] & 0xFu);
+
+    for (u32 x = 0; x < GEN_W; x++) {
+        const u8 a = lineA[x];
+        const u8 b = lineB[x];
+        const u8 s = lineSpr[x];
+
+        const bool aHi = (a & 0x80u) != 0u, aOn = (a & 0x7Fu) != 0u;
+        const bool bHi = (b & 0x80u) != 0u, bOn = (b & 0x7Fu) != 0u;
+        const bool sHi = (s & 0x80u) != 0u, sOn = (s & 0x7Fu) != 0u;
+
+        u32 colorIdx = backdropIdx;
+        bool found = false;
+
+        // High-priority layer, in stack order Spr > A > B (top wins)
+        if (!found && sOn && sHi) { colorIdx = s & 0x7Fu; found = true; }
+        if (!found && aOn && aHi) { colorIdx = a & 0x7Fu; found = true; }
+        if (!found && bOn && bHi) { colorIdx = b & 0x7Fu; found = true; }
+        // Low-priority layer, same stack order
+        if (!found && sOn)        { colorIdx = s & 0x7Fu; found = true; }
+        if (!found && aOn)        { colorIdx = a & 0x7Fu; found = true; }
+        if (!found && bOn)        { colorIdx = b & 0x7Fu; found = true; }
+
+        const RGB rgb = _decodeCRAMColor(cram[colorIdx & 0x3Fu]);
+        const u32 pi  = (y * GEN_W + x) * 4u;
+        framebuf[pi]     = rgb.r;
+        framebuf[pi + 1] = rgb.g;
+        framebuf[pi + 2] = rgb.b;
+        framebuf[pi + 3] = 255;
+    }
 }
 
 
@@ -435,8 +482,9 @@ void GenVDP::_renderPlaneLine(bool isB, u32 y) {
                          +  (tileCol & (hsize - 1u))) * 2u) & 0xFFFFu;
         const u16 entry  = (static_cast<u16>(vram[ntAddr]) << 8) | vram[ntAddr + 1u];
 
-        const u32 tileIdx = entry & 0x7FFu;
+const u32 tileIdx = entry & 0x7FFu;
         const u32 palLine = (entry >> 13) & 3u;
+        const bool prio   = (entry & 0x8000u) != 0u;  // bit 15 = priority
         const u32 row     = (entry & 0x1000u) ? (7u - fineY) : fineY;  // bit 12 = vFlip
         const u32 col     = (entry & 0x0800u) ? (7u - fineX) : fineX;  // bit 11 = hFlip
 
@@ -445,14 +493,12 @@ void GenVDP::_renderPlaneLine(bool isB, u32 y) {
         const u32 byteAddr = (tileIdx * 32u + row * 4u + (col >> 1)) & 0xFFFFu;
         const u8  byte_    = vram[byteAddr];
         const u8  nibble   = (col & 1u) ? (byte_ & 0xFu) : ((byte_ >> 4) & 0xFu);
-        if (nibble == 0) continue;  // colour 0 = transparent
 
-        const RGB rgb = _decodeCRAMColor(cram[(palLine * 16u + nibble) & 0x3Fu]);
-        const u32 pi  = (y * GEN_W + x) * 4u;
-        framebuf[pi]     = rgb.r;
-        framebuf[pi + 1] = rgb.g;
-        framebuf[pi + 2] = rgb.b;
-        framebuf[pi + 3] = 255;
+        u8* line = isB ? lineB : lineA;
+        if (nibble == 0) { line[x] = 0; continue; }  // colour 0 = transparent
+
+        const u8 colorIdx = static_cast<u8>((palLine * 16u + nibble) & 0x3Fu);
+        line[x] = colorIdx | (prio ? 0x80u : 0u);
     }
 }
 
@@ -470,12 +516,15 @@ void GenVDP::_renderPlaneLine(bool isB, u32 y) {
 //   (each column is filled top-to-bottom before moving to the next column)
 // ─────────────────────────────────────────────────────────────────────────────
 void GenVDP::_renderSpriteLine(u32 y) {
-    const u32 sprBase = static_cast<u32>(regs[5] & 0x7Fu) << 9;
-    const u32 maxSpr  = (regs[12] & 1u) ? 80u : 64u;
+    const bool h40 = (regs[12] & 1u) != 0u;
+    // H40 mode: table must be 0x400-aligned, so bit0 of reg5 is ignored by
+    // hardware. H32 mode: table is 0x200-aligned, bit0 is significant.
+    const u32 sprBase = static_cast<u32>(regs[5] & (h40 ? 0x7Eu : 0x7Fu)) << 9;
+    const u32 maxSpr  = h40 ? 80u : 64u;
 
     // Walk the link chain and collect sprites that cover this scanline.
     // Limit to 20 per line (H40) / 16 per line (H32) per hardware spec.
-    const u32 lineLimit = (regs[12] & 1u) ? 20u : 16u;
+    const u32 lineLimit = h40 ? 20u : 16u;
 
     struct SprInfo { s32 sx, sy; u32 hCells, vCells; u16 attr; };
     SprInfo sprites[80];
@@ -508,11 +557,12 @@ void GenVDP::_renderSpriteLine(u32 y) {
         if (link == 0) break;
     }
 
-    // Draw back-to-front so sprite 0 (first in chain, highest priority) wins
+// Draw back-to-front so sprite 0 (first in chain, highest priority) wins
     for (s32 si = static_cast<s32>(sprCount) - 1; si >= 0; si--) {
         const SprInfo& spr = sprites[si];
         const u32  tileIdx = spr.attr & 0x7FFu;
         const u32  palLine = (spr.attr >> 13) & 3u;
+        const bool prio    = (spr.attr & 0x8000u) != 0u;  // bit 15 = priority
         const bool vFlip   = (spr.attr & 0x1000u) != 0u;
         const bool hFlip   = (spr.attr & 0x0800u) != 0u;
 
@@ -535,12 +585,8 @@ void GenVDP::_renderSpriteLine(u32 y) {
                                             : ((vram[bAddr] >> 4) & 0xFu);
                 if (nibble == 0) continue;
 
-                const RGB rgb = _decodeCRAMColor(cram[(palLine * 16u + nibble) & 0x3Fu]);
-                const u32 pi  = (y * GEN_W + static_cast<u32>(sx)) * 4u;
-                framebuf[pi]     = rgb.r;
-                framebuf[pi + 1] = rgb.g;
-                framebuf[pi + 2] = rgb.b;
-                framebuf[pi + 3] = 255;
+                const u8 colorIdx = static_cast<u8>((palLine * 16u + nibble) & 0x3Fu);
+                lineSpr[static_cast<u32>(sx)] = colorIdx | (prio ? 0x80u : 0u);
             }
         }
     }

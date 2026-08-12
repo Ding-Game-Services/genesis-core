@@ -117,6 +117,7 @@ public:
     bool z80BusReq;
     bool z80Reset;
     u32  z80Bank;
+    bool isPAL;
     GenVDP* vdp;
     GenZ80* z80;
     GenAPU* apu;
@@ -162,8 +163,13 @@ private:
     u32  readDn (u32 n, u32 sz);
     void writeDn(u32 n, u32 v, u32 sz);
     u32  calcEA (u32 mode, u32 reg, u32 sz);
-u32  readEA (u32 mode, u32 reg, u32 sz);
+    u32  readEA (u32 mode, u32 reg, u32 sz);
     void writeEA(u32 mode, u32 reg, u32 val, u32 sz);
+    // Read-modify-write helpers: compute the effective address ONCE and hand
+    // it back so the paired write reuses it instead of recomputing calcEA().
+    // Recomputing calcEA() for (An)+/-(An) double-steps the address register,
+    // and for modes that consume extension words (d16(An), Absolute, PC-rel)
+    // it double-fetches those words and desyncs PC. This is the fix for that.
     u32  _rmwRead (u32 mode, u32 reg, u32 sz, u32& ea);
     void _rmwWrite(u32 mode, u32 reg, u32 sz, u32 ea, u32 val);
     void _masks(u32 sz, u32& mask, u32& msb);
@@ -212,6 +218,13 @@ public:
     u32  diagDmaCount;
     bool vramDirty;
     explicit GenVDP(GenBus* bus);
+ // Per-line compositing buffers (item 1: priority bit support).
+// Encoding: 0 = transparent, else (colorIndex & 0x3F) | (priority ? 0x80 : 0).
+// colorIndex is the direct CRAM word index (palLine*16+nibble), not a raw palette nibble,
+// so 0x3F is enough range (CRAM has 64 entries) and bit 7 is free for priority.
+ u8   lineA[GEN_W];
+ u8   lineB[GEN_W];
+ u8   lineSpr[GEN_W];
     void reset();
     u8   read8 (u32 off);
     u16  read16(u32 off);
@@ -235,6 +248,7 @@ private:
     void _renderScanline  (u32 y);
     void _renderPlaneLine (bool isB, u32 y);
     void _renderSpriteLine(u32 y);
+	void _compositeLine   (u32 y);
     struct RGB { u8 r, g, b; };
     RGB  _decodeCRAMColor(u16 color);
 };
@@ -253,6 +267,7 @@ public:
     explicit GenZ80(GenBus* bus);
     void reset();
     void run(u32 targetCycles);
+    bool interrupt();
 
     // FIX: Removed 'struct' keyword. 
     // Now using the Type name defined in the SDK.

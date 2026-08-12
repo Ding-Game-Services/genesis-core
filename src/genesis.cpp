@@ -71,6 +71,7 @@ bool Genesis::loadROM(const u8* data, u32 size) {
 void Genesis::setRegion(bool pal) {
     isPAL        = pal;
     vdp.isPAL    = pal;
+    bus.isPAL    = pal;
     if (pal) {
         linesFrame  = PAL_LINES;
         activeLines = PAL_ACTIVE;
@@ -106,19 +107,28 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 void Genesis::runFrame() {
     for (u32 line = 0; line < linesFrame; line++) {
 
-        if (!bus.z80Reset) {
+        if (!bus.z80Reset && !bus.z80BusReq) {
             z80.run(z80cpl);
         }
 
         const bool vblankStart = vdp.tickLine(line, isPAL);
 
-        const u32 lineStartCycles = cpu.cycles;
-        while (cpu.cycles < lineStartCycles + 488) {
-            cpu.step();
-        }
+        // M68K::run() returns how far this line's execution overshot its
+        // cycle budget (instructions don't divide evenly into 488/487
+        // cycles). Carry that overshoot into the next line's budget so
+        // per-line drift doesn't accumulate uncorrected across the frame.
+        const u32 budget = (static_cast<u32>(overshoot) < cpl)
+                          ? (cpl - static_cast<u32>(overshoot))
+                          : 0u;
+        overshoot = static_cast<s32>(cpu.run(budget));
 
-        if (vblankStart && (vdp.regs[1] & 0x20u)) {
-            cpu.interrupt(6);
+        if (vblankStart) {
+            if (vdp.regs[1] & 0x20u) {
+                cpu.interrupt(6);
+            }
+            if (!bus.z80Reset && !bus.z80BusReq) {
+                z80.interrupt();
+            }
         }
 
         if (vdp.checkHInt(line, isPAL)) {

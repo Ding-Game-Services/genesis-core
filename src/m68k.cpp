@@ -766,7 +766,7 @@ case 0x6: {
 void M68K::_g4E(u16 op, u32 mode, u32 reg, u32 /*sz*/) {
     const u32 lo8 = op & 0xFFu;
 
-    if ((op&0xF0u)==0x40u) { exception(32u+(op&0xFu)); cycles+=34; return; }  // TRAP
+    if ((op&0xF0u)==0x40u) { exception(32u+(op&0xFu)); return; }  // TRAP
     if ((op&0xF8u)==0x50u) {                                                    // LINK
         const s32 disp=sext16(fetch16());
         a[7]-=4; bus->write32(a[7],a[reg]);
@@ -816,7 +816,7 @@ case 0x75:
     cycles+=16;
     return;
 }
-        case 0x76: if (sr&0x02u) exception(7); cycles+=4; return;     // TRAPV
+        case 0x76: if (sr&0x02u) { exception(7); return; } cycles+=4; return;     // TRAPV
         case 0x77: {                                                    // RTR
             const u16 ccr=bus->read16(a[7])&0x1Fu; a[7]+=2;
             sr=static_cast<u16>((sr&~0x1Fu)|ccr);
@@ -839,20 +839,23 @@ case 0x75:
 // ─────────────────────────────────────────────────────────────────────────────
 void M68K::_movemToMem(u16 /*op*/, u32 mode, u32 reg, u32 sz) {
     const u16 list    = fetch16();
-    const u32 bytes   = (sz==2?4u:2u) * popcount32(list);
     const bool preDec = (mode == 4);
 
     if (preDec) {
-        // Reversed mask: bit 0=A7, bit 7=A0, bit 8=D7, bit 15=D0
-        u32 addr = a[reg] - bytes;
-        a[reg]   = addr;
+        // Reversed mask: bit 0=A7, bit 7=A0, bit 8=D7, bit 15=D0.
+        // Registers are processed A7 first...D0 last, and each is stored
+        // at a progressively LOWER address (decrement-then-store), so A7
+        // lands at the highest address and D0 at the final (fully
+        // decremented) address == the new An value.
+        u32 addr = a[reg];
         for (u32 i=0; i<16u; i++) {
             if (!(list & (1u<<i))) continue;
             const u32 bit = 15u - i;
             const u32 rv  = (bit >= 8u) ? this->a[bit-8u] : this->d[bit];
-            if (sz==2) { bus->write32(addr, rv); addr+=4; }
-            else       { bus->write16(addr, static_cast<u16>(rv)); addr+=2; }
+            if (sz==2) { addr -= 4u; bus->write32(addr, rv); }
+            else       { addr -= 2u; bus->write16(addr, static_cast<u16>(rv)); }
         }
+        a[reg] = addr;
     } else {
         u32 addr = calcEA(mode, reg, sz);
         for (u32 i=0; i<16u; i++) {
