@@ -36,7 +36,7 @@ static const struct { const char* name; u8 idx; } s_inputs[] = {
 };
 
 static constexpr u32 INPUT_COUNT = GEN_BTN_COUNT; 
-static constexpr u32 REGION_COUNT = 3;
+static constexpr u32 REGION_COUNT = 6;
 static constexpr u32 SAVE_MAX = 256u * 1024u;
 
 DING_EXPORT void ding_init() {
@@ -139,7 +139,7 @@ DING_EXPORT void ding_get_memory_region(u32 index, DingMemoryRegion* out) {
     if (!out || !s_gen || index >= ding_get_memory_region_count()) return;
     std::memset(out, 0, sizeof(*out));
 
-    switch (index) {
+switch (index) {
         case 0:
             out->name = "WRAM";
             out->base_addr = 0xFF0000u;
@@ -165,6 +165,46 @@ case 2:
             out->writable = 0;
             break;
         case 3:
+            // CRAM: 64 words (128 bytes), Genesis palette RAM. Not
+            // separately addressable on the 68K bus (it's reached only
+            // through the VDP data port), but exposing it here lets
+            // debug tooling dump the actual palette contents directly —
+            // previously there was no way to inspect CRAM at all.
+out->name = "CRAM";
+            out->base_addr = 0u;   // no real bus address; VDP-port-only
+            out->size = GEN_CRAM_WORDS * sizeof(u16);
+            out->ptr = reinterpret_cast<u8*>(s_gen->vdp.cram);
+            out->access = DING_MEM_DIRECT;
+            out->writable = 0;
+            break;
+        case 4:
+            // VSRAM: 40 words, vertical scroll RAM. Same story as CRAM —
+            // VDP-port-only, exposed here purely for debug visibility.
+            out->name = "VSRAM";
+            out->base_addr = 0u;
+            out->size = GEN_VSRAM_WORDS * sizeof(u16);
+            out->ptr = reinterpret_cast<u8*>(s_gen->vdp.vsram);
+            out->access = DING_MEM_DIRECT;
+            out->writable = 0;
+            break;
+        case 5:
+            // ROM: exposed read-only purely for debug tooling — lets a
+            // harness dump raw bytes at/around PC for manual disassembly
+            // when diagnosing infinite loops or unexpected control flow.
+            // Previously there was no way to inspect ROM contents through
+            // the diagnostic API at all.
+            out->name = "ROM";
+            out->base_addr = 0x000000u;
+            out->size = s_gen->bus.rom.empty() ? 0u : static_cast<u32>(s_gen->bus.rom.size());
+            out->ptr = s_gen->bus.rom.empty() ? nullptr : s_gen->bus.rom.data();
+            out->access = DING_MEM_DIRECT;
+            out->writable = 0;
+            break;
+        case 6:
+            // SRAM stays last and stays conditional — it's the only region
+            // here that genuinely may not exist depending on the cart, so
+            // it's the one appended past the unconditional REGION_COUNT
+            // base rather than baked into it.
             out->name = "SRAM";
             out->base_addr = 0x200000u;
             out->size = s_gen->bus.sramSize;

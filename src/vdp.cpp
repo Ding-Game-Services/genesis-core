@@ -24,11 +24,13 @@ GenVDP::GenVDP(GenBus* b) : bus(b) {
     dmaActive      = false;
     frame          = 0;
     isPAL          = false;
-    vintPending    = false;
+vintPending    = false;
     dmaFillData    = 0;
     dmaFillPending = false;
     diagDmaCount   = 0;
     vramDirty      = false;
+    spriteOverflow  = false;
+    spriteCollision = false;
 }
 
 void GenVDP::reset() {
@@ -49,10 +51,12 @@ void GenVDP::reset() {
     vblank         = false;
     hblank         = false;
     dmaActive      = false;
-    vintPending    = false;
+vintPending    = false;
     dmaFillData    = 0;
     dmaFillPending = false;
     vramDirty      = false;
+    spriteOverflow  = false;
+    spriteCollision = false;
 	regs[1] = 0x40; // Force Display Enable bit to 1
 
 }
@@ -62,12 +66,29 @@ void GenVDP::reset() {
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenVDP::read8(u32 off) {
     off &= 0x1Fu;
-    if (off < 4) {
+    // Offsets 0-3 = data port, 4-7 = control/status port. Both are
+    // byte-accessible mirrors of a 16-bit register. Previously only
+    // 0-3 were handled here; byte reads to the status port (4-7) fell
+    // through to the 0xFF default, meaning every status bit — DMA busy
+    // included — always read as "set" via a byte access. Any game that
+    // polls DMA-busy or VBlank through a byte read to $C00005 (a common
+    // pattern) would spin forever waiting for a bit that could never
+    // clear. read16 already carries the correct status-read side effects
+    // (clearing vintPending/sprite flags), which byte reads should share.
+    if (off < 8) {
         const u16 w = read16(off & ~1u);
         return (off & 1u) ? static_cast<u8>(w) : static_cast<u8>(w >> 8);
     }
     if (off == 8) return static_cast<u8>((hcounter >> 1) & 0xFFu);
-    if (off == 9) return static_cast<u8>(vcounter & 0xFFu);
+    if (off == 9) {
+        // Interlace mode 2 (reg 12 bits 1:0 == 11) doubles VCounter's LSB
+        // resolution — real hardware shifts the internal line count left
+        // by 1 and ORs in the field bit before truncating to the 8-bit
+        // port. Mode 1 and normal mode read VCounter unmodified.
+        const bool im2 = (regs[12] & 0x03u) == 0x03u;
+        const u32  v   = im2 ? ((vcounter << 1) | (frame & 1u)) : vcounter;
+        return static_cast<u8>(v & 0xFFu);
+    }
     return 0xFFu;
 }
 
@@ -76,10 +97,12 @@ u16 GenVDP::read16(u32 off) {
     switch (off & 0xFEu) {
         case 0x00:
         case 0x02: return _readData();
-        case 0x04:
+case 0x04:
         case 0x06: {
             const u16 s = _status();
-            vintPending  = false;
+            vintPending     = false;
+            spriteOverflow  = false;
+            spriteCollision = false;
             ctrlPendWord = false;  // status read aborts any pending ctrl sequence
             ctrlPendByte = false;
             return s;
@@ -120,11 +143,13 @@ void GenVDP::write16(u32 off, u16 val) {
 u16 GenVDP::_status() {
     return 0x0200u
          | 0x0100u
-         | (vintPending ? 0x0080u : 0u)
-         | (vblank      ? 0x0008u : 0u)
-         | (hblank      ? 0x0004u : 0u)
-         | (dmaActive   ? 0x0002u : 0u)
-         | (isPAL       ? 0x0001u : 0u);
+         | (vintPending     ? 0x0080u : 0u)
+         | (spriteOverflow  ? 0x0040u : 0u)
+         | (spriteCollision ? 0x0020u : 0u)
+         | (vblank          ? 0x0008u : 0u)
+         | (hblank          ? 0x0004u : 0u)
+         | (dmaActive       ? 0x0002u : 0u)
+         | (isPAL           ? 0x0001u : 0u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +198,12 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         cdReg = static_cast<u8>(((w1 >> 14) & 0x03u) | ((w2 >> 2) & 0x3Cu));
         addrReg = static_cast<u32>((w1 & 0x3FFFu) | ((w2 & 0x03u) << 14));
 
-        if (cdReg & 0x20u) {
+if (cdReg & 0x20u) {
+            // Real hardware gates all DMA (fill, copy, and 68K→VRAM transfer)
+            // on reg 1 bit 4. If it's clear, the CD5 bit still gets latched
+            // above but no transfer — pending or otherwise — happens.
+            if (!(regs[1] & 0x10u)) return;
+
             const u32 dmaMode = (regs[23] >> 6) & 3u;
             if (dmaMode == 2) dmaFillPending = true; 
             else {
@@ -210,9 +240,11 @@ void GenVDP::_writeData(u16 val) {
 
     if (dmaFillPending) {
         dmaFillPending = false;
-        dmaActive = true;
-        _processDMA(cdReg);
-        dmaActive = false;
+        if (regs[1] & 0x10u) {
+            dmaActive = true;
+            _processDMA(cdReg);
+            dmaActive = false;
+        }
         return;
     }
 
@@ -228,7 +260,11 @@ void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
     const u16 addr = addrReg;
 
     if ((cd & 0x0F) == 1) {
-		        vram[(addr + bytePos) & 0xFFFFu] = val;
+        // Odd-address byte swap (Charles MacDonald hw notes): a word write
+        // to an odd VRAM address lands with hi/lo swapped relative to the
+        // normal even-address case. Only affects raw VRAM writes, not CRAM/VSRAM.
+        const int pos = (addr & 1u) ? (1 - bytePos) : bytePos;
+        vram[(addr + pos) & 0xFFFFu] = val;
     } else if (cd == 3) {
         u16 current = cram[(addr >> 1) & 0x3Fu];
         if (bytePos == 0) current = (current & 0x00FF) | (val << 8);
@@ -276,6 +312,24 @@ void GenVDP::_processDMA(u8 cd) {
         case 3:         _dmaVRAMCopy  (dmaLen, cd);          break;
     }
 
+// ── Stall the 68K for the transfer duration ──────────────────────────────
+    // DMA locks the 68K bus on real hardware; previously this ran "free"
+    // (zero CPU cycles charged), so games timing off DMA completion would
+    // desync. Memory→VRAM copy moves a 16-bit word per length unit; VRAM
+    // fill and VRAM→VRAM copy move a single byte per length unit.
+    //
+    // Real hardware transfers noticeably faster during blanking than during
+    // active display (roughly 3-4x). Games commonly queue their bulk level
+    // DMA specifically during VBlank expecting that faster rate — charging
+    // the slower active-display rate uniformly (as an earlier flat-2 version
+    // of this did) makes every vblank fall further behind than real
+    // hardware would, which can visibly delay or stall games that lean
+    // heavily on DMA-during-vblank (e.g. Sonic's DMA queue processor).
+    const u32 DMA_CYCLES_PER_BYTE = vblank ? 1u : 2u;
+    const u32 bytesMoved = (dmaMode <= 1u) ? (dmaLen * 2u) : dmaLen;
+    if (bus && bus->m68k)
+        bus->m68k->cycles += bytesMoved * DMA_CYCLES_PER_BYTE;
+
     // Clear length registers after transfer (hardware behaviour)
     regs[19] = 0;
     regs[20] = 0;
@@ -288,18 +342,35 @@ void GenVDP::_writeByCD(u16 addr, u16 val, u8 cd) {
     else if (d == 3) { cram [(addr >> 1) & 0x3Fu]  = val; }
     else if (d == 5) { vsram[(addr >> 1) & 0x27u]  = val; }
 }
-
 void GenVDP::_dmaMemoryCopy(u32 srcAddr, u32 len, u8 cd) {
     const u8 d = cd & 0xFu;
+    // The source address increments only within its 128KB (17-bit) window
+    // — the window covered by regs21/regs22. The bank bits from regs23
+    // (bits 23:17) are never touched by the increment on real hardware, so
+    // a transfer that crosses a 128KB boundary wraps back to the start of
+    // the SAME bank instead of rolling into the next one. Previously the
+    // full 24-bit srcAddr was incremented and masked, letting the carry
+    // propagate into the bank bits — wrong for any transfer that crosses
+    // that boundary.
+    const u32 bank = srcAddr & 0xFE0000u;
+    u32 bankOff    = srcAddr & 0x01FFFFu;
     for (u32 i = 0; i < len; i++) {
-        const u8  hi   = bus->read8(srcAddr & 0xFFFFFFu);
-        const u8  lo   = bus->read8((srcAddr + 1u) & 0xFFFFFFu);
+        const u32 curSrc = bank | bankOff;
+        const u8  hi   = bus->read8(curSrc);
+        const u8  lo   = bus->read8((bank | ((bankOff + 1u) & 0x01FFFFu)));
         const u16 word = (static_cast<u16>(hi) << 8) | lo;
         const u16 addr = addrReg;
-        if      (d == 1) { vram[addr & 0xFFFFu] = hi; vram[(addr + 1u) & 0xFFFFu] = lo; }
+        if (d == 1) {
+            // Odd-address byte swap, same rule as _writeVRAMByte: a word
+            // landing on an odd VRAM address gets hi/lo swapped relative
+            // to the even-address case. DMA previously wrote hi/lo straight
+            // through regardless of addr parity, diverging from real hardware.
+            if (addr & 1u) { vram[addr & 0xFFFFu] = lo; vram[(addr + 1u) & 0xFFFFu] = hi; }
+            else            { vram[addr & 0xFFFFu] = hi; vram[(addr + 1u) & 0xFFFFu] = lo; }
+        }
         else if (d == 3) { cram [(addr >> 1) & 0x3Fu]  = word; }
         else if (d == 5) { vsram[(addr >> 1) & 0x27u]  = word; }
-        srcAddr = (srcAddr + 2u) & 0xFFFFFFu;
+        bankOff = (bankOff + 2u) & 0x01FFFFu;
         addrReg = static_cast<u16>((addrReg + addrInc) & 0xFFFFu);
     }
     vramDirty = true;
@@ -309,7 +380,10 @@ void GenVDP::_dmaVRAMFill(u32 len, u8 cd) {
     const u8 fillByte = static_cast<u8>(dmaFillData >> 8);
     for (u32 i = 0; i < len; i++) {
         vram[addrReg & 0xFFFFu] = fillByte;
-        addrReg = (addrReg + 1u) & 0xFFFFu;
+        // Fill honors the auto-increment register (reg 15), same as normal
+        // data-port writes — was hardcoded to +1, which only happened to
+        // match the common case where addrInc==1 during fills.
+        addrReg = (addrReg + addrInc) & 0xFFFFu;
     }
     vramDirty = true;
 }
@@ -322,8 +396,10 @@ void GenVDP::_dmaVRAMCopy(u32 len, u8 /*cd*/) {
     u16 src = (static_cast<u16>(regs[22]) << 8) | regs[21];
     for (u32 i = 0; i < len; i++) {
         vram[addrReg & 0xFFFFu] = vram[src & 0xFFFFu];
-        src     = (src     + 1u) & 0xFFFFu;
-addrReg = (addrReg + 1u) & 0xFFFFu;
+        // Source always steps by 1 byte per hardware behavior — only the
+        // destination (addrReg) honors addrInc.
+        src     = (src + 1u) & 0xFFFFu;
+        addrReg = (addrReg + addrInc) & 0xFFFFu;
     }
     vramDirty = true;
 }
@@ -332,7 +408,12 @@ addrReg = (addrReg + 1u) & 0xFFFFu;
 // Scanline timing hooks
 // ─────────────────────────────────────────────────────────────────────────────
 bool GenVDP::tickLine(u32 line, bool pal) {
-    vcounter = static_cast<u16>(line);
+    // HV-counter freeze (reg 0 bit 1): when set, VCounter (and HCounter,
+    // which we don't model sub-line anyway) holds its last value instead
+    // of advancing. Games use this for stable mid-frame raster reads.
+    if (!(regs[0] & 0x02u))
+        vcounter = static_cast<u16>(line);
+
     const u32 activeH = pal ? PAL_ACTIVE : NTSC_ACTIVE;
     vblank = (line >= activeH);
     hblank = false;
@@ -373,12 +454,14 @@ void GenVDP::_renderLine(u32 line) {
 
 
 void GenVDP::_renderScanline(u32 y) {
-    std::memset(lineA,   0, sizeof(lineA));
-    std::memset(lineB,   0, sizeof(lineB));
-    std::memset(lineSpr, 0, sizeof(lineSpr));
+    std::memset(lineA,      0, sizeof(lineA));
+    std::memset(lineB,      0, sizeof(lineB));
+    std::memset(lineSpr,    0, sizeof(lineSpr));
+    std::memset(lineShMark, 0, sizeof(lineShMark));
 
-    _renderPlaneLine(true,  y);  // Plane B
+_renderPlaneLine(true,  y);  // Plane B
     _renderPlaneLine(false, y);  // Plane A
+    _renderWindowLine(y);        // Window — overlays Plane A region only
     _renderSpriteLine(y);        // Sprites
 
     _compositeLine(y);
@@ -405,19 +488,50 @@ void GenVDP::_compositeLine(u32 y) {
         const bool bHi = (b & 0x80u) != 0u, bOn = (b & 0x7Fu) != 0u;
         const bool sHi = (s & 0x80u) != 0u, sOn = (s & 0x7Fu) != 0u;
 
-        u32 colorIdx = backdropIdx;
+u32 colorIdx = backdropIdx;
         bool found = false;
+        bool winnerIsHiPrio = false;
 
         // High-priority layer, in stack order Spr > A > B (top wins)
-        if (!found && sOn && sHi) { colorIdx = s & 0x7Fu; found = true; }
-        if (!found && aOn && aHi) { colorIdx = a & 0x7Fu; found = true; }
-        if (!found && bOn && bHi) { colorIdx = b & 0x7Fu; found = true; }
+        if (!found && sOn && sHi) { colorIdx = s & 0x7Fu; found = true; winnerIsHiPrio = true; }
+        if (!found && aOn && aHi) { colorIdx = a & 0x7Fu; found = true; winnerIsHiPrio = true; }
+        if (!found && bOn && bHi) { colorIdx = b & 0x7Fu; found = true; winnerIsHiPrio = true; }
         // Low-priority layer, same stack order
         if (!found && sOn)        { colorIdx = s & 0x7Fu; found = true; }
         if (!found && aOn)        { colorIdx = a & 0x7Fu; found = true; }
         if (!found && bOn)        { colorIdx = b & 0x7Fu; found = true; }
 
-        const RGB rgb = _decodeCRAMColor(cram[colorIdx & 0x3Fu]);
+        RGB rgb = _decodeCRAMColor(cram[colorIdx & 0x3Fu]);
+
+        // Shadow/Highlight (item 6). Only active when reg 12 bit 3 is set.
+        // Rule: anything at high priority renders at normal brightness (it's
+        // "above" the shadow layer entirely). Anything at low priority is
+        // shadowed by default, UNLESS a sprite operator pixel underneath it
+        // forces highlight or shadow explicitly for that x position.
+        if (regs[12] & 0x08u) {
+            const u8 mark = lineShMark[x];
+            bool shadow = false, highlight = false;
+            if (winnerIsHiPrio) {
+                // High-priority pixels ignore operator marks — always normal.
+            } else if (mark == 1u) {
+                highlight = true;
+            } else if (mark == 2u) {
+                shadow = true;
+            } else {
+                shadow = true;  // default: low-priority layer is shadowed
+            }
+
+            if (shadow) {
+                rgb.r = static_cast<u8>(rgb.r >> 1);
+                rgb.g = static_cast<u8>(rgb.g >> 1);
+                rgb.b = static_cast<u8>(rgb.b >> 1);
+            } else if (highlight) {
+                rgb.r = static_cast<u8>(0x80u + (rgb.r >> 1));
+                rgb.g = static_cast<u8>(0x80u + (rgb.g >> 1));
+                rgb.b = static_cast<u8>(0x80u + (rgb.b >> 1));
+            }
+        }
+
         const u32 pi  = (y * GEN_W + x) * 4u;
         framebuf[pi]     = rgb.r;
         framebuf[pi + 1] = rgb.g;
@@ -464,14 +578,25 @@ void GenVDP::_renderPlaneLine(bool isB, u32 y) {
     const u32 raw_hs  = (static_cast<u32>(vram[hscAddr]) << 8) | vram[hscAddr + 1u];
     const u32 hscroll = (0x400u - raw_hs) & 0x3FFu;
 
-    // VScroll (simplified: full-screen vertical scroll only; line/cell not implemented)
-    const u32 vscroll = static_cast<u32>(isB ? vsram[1] : vsram[0]) & 0x3FFu;
-
-    const u32 scrollY = (y + vscroll) & (vsize * 8u - 1u);
-    const u32 tileRow = scrollY >> 3;
-    const u32 fineY   = scrollY & 7u;
+// VScroll mode: reg 11 bit 2 set = per-16px-column, else full-screen.
+    // Column mode indexes VSRAM in pairs: [2*col]=Plane A, [2*col+1]=Plane B
+    // — NOT [isB] like the full-screen case, so this can't reuse vscroll
+    // computed once outside the x-loop; it has to be resampled per column.
+    const bool vscPerCol = (regs[11] & 0x04u) != 0u;
+    const u32  vscrollFull = static_cast<u32>(isB ? vsram[1] : vsram[0]) & 0x3FFu;
 
     for (u32 x = 0; x < GEN_W; x++) {
+        u32 vscroll = vscrollFull;
+        if (vscPerCol) {
+            const u32 vcol = (x >> 4) & 0x13u;  // 16px columns, 20 columns across 320px
+            const u32 vIdx = vcol * 2u + (isB ? 1u : 0u);
+            if (vIdx < GEN_VSRAM_WORDS)
+                vscroll = static_cast<u32>(vsram[vIdx]) & 0x3FFu;
+        }
+        const u32 scrollY = (y + vscroll) & (vsize * 8u - 1u);
+        const u32 tileRow = scrollY >> 3;
+        const u32 fineY   = scrollY & 7u;
+
         const u32 scrollX = (x + hscroll) & (hsize * 8u - 1u);
         const u32 tileCol = scrollX >> 3;
         const u32 fineX   = scrollX & 7u;
@@ -494,11 +619,87 @@ const u32 tileIdx = entry & 0x7FFu;
         const u8  byte_    = vram[byteAddr];
         const u8  nibble   = (col & 1u) ? (byte_ & 0xFu) : ((byte_ >> 4) & 0xFu);
 
-        u8* line = isB ? lineB : lineA;
+u8* line = isB ? lineB : lineA;
         if (nibble == 0) { line[x] = 0; continue; }  // colour 0 = transparent
 
         const u8 colorIdx = static_cast<u8>((palLine * 16u + nibble) & 0x3Fu);
         line[x] = colorIdx | (prio ? 0x80u : 0u);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window plane (item 2). Window is Plane-A-only on real hardware: where the
+// window region covers this pixel, it fully replaces Plane A's tile (not
+// blended) using its own fixed, unscrolled nametable. Reg 17/18 select the
+// region; reg 3 selects the window's own nametable base.
+//
+// Reg 17 (H pos): bit7 = 0 left-side / 1 right-side, bits4:0 = position in
+//                 8px column units.
+// Reg 18 (V pos): bit7 = 0 top-side  / 1 bottom-side, bits4:0 = position in
+//                 8px row units.
+// ─────────────────────────────────────────────────────────────────────────────
+void GenVDP::_renderWindowLine(u32 y) {
+    const u32 wCol   = regs[17] & 0x1Fu;
+    const bool wRight = (regs[17] & 0x80u) != 0u;
+    const u32 wRow   = regs[18] & 0x1Fu;
+    const bool wBottom = (regs[18] & 0x80u) != 0u;
+
+    // No window active at all: H pos 0 with left-side selected (and V pos 0
+    // top-side) means "no window", which is the common no-window register
+    // state games leave behind. Real hardware would still technically apply
+    // an empty region here so this is just a fast-path skip, not a special case.
+    if (wCol == 0u && !wRight && wRow == 0u && !wBottom) return;
+
+    const u32 rowTile = y >> 3;
+    const bool rowInWindow = wBottom ? (rowTile >= wRow) : (rowTile < wRow);
+
+    // H40 vs H32 determines how many 32-tile-wide rows the window nametable
+    // spans and its base alignment, same convention as the sprite table.
+    const bool h40 = (regs[12] & 1u) != 0u;
+    const u32 hsizeTiles = h40 ? 64u : 32u;   // window nametable pitch in tiles
+    const u32 screenTilesW = h40 ? 40u : 32u;
+
+    // Window base address: reg 3 bits 5:1 (H40 ignores bit 1, same as sprite
+    // table alignment rule) — bits 6:1 relevant in H32.
+    const u32 winBase = static_cast<u32>(regs[3] & (h40 ? 0x3Cu : 0x3Eu)) << 10;
+
+    const u32 fineY = y & 7u;
+
+    for (u32 x = 0; x < GEN_W; x++) {
+        const u32 col = x >> 3;
+        if (col >= screenTilesW) continue;
+
+        const bool colInWindow = wRight ? (col >= wCol * 2u) : (col < wCol * 2u);
+        // Window region is the union: a row that's in the window applies
+        // across the whole line if H pos is 0/left, and vice versa — but
+        // per Sega's documented behavior when BOTH H and V are set, the
+        // window still only covers the specific horizontal OR vertical
+        // strip, not their intersection. We treat "in window" as: for a
+        // window row, it covers horizontally per wCol; for a window col,
+        // it covers vertically per wRow. Simplify to OR of the two active regions.
+        const bool inWindow = (wRow != 0u || wBottom) ? rowInWindow
+                             : (wCol != 0u || wRight) ? colInWindow
+                             : false;
+        if (!inWindow) continue;
+
+        const u32 fineX = x & 7u;
+        const u32 ntAddr = (winBase + (rowTile * hsizeTiles + col) * 2u) & 0xFFFFu;
+        const u16 entry  = (static_cast<u16>(vram[ntAddr]) << 8) | vram[ntAddr + 1u];
+
+        const u32 tileIdx = entry & 0x7FFu;
+        const u32 palLine = (entry >> 13) & 3u;
+        const bool prio   = (entry & 0x8000u) != 0u;
+        const u32 row     = (entry & 0x1000u) ? (7u - fineY) : fineY;
+        const u32 c       = (entry & 0x0800u) ? (7u - fineX) : fineX;
+
+        const u32 byteAddr = (tileIdx * 32u + row * 4u + (c >> 1)) & 0xFFFFu;
+        const u8  byte_    = vram[byteAddr];
+        const u8  nibble   = (c & 1u) ? (byte_ & 0xFu) : ((byte_ >> 4) & 0xFu);
+
+        if (nibble == 0) { lineA[x] = 0; continue; }
+
+        const u8 colorIdx = static_cast<u8>((palLine * 16u + nibble) & 0x3Fu);
+        lineA[x] = colorIdx | (prio ? 0x80u : 0u);
     }
 }
 
@@ -542,10 +743,12 @@ void GenVDP::_renderSpriteLine(u32 y) {
         const s32 sy     = static_cast<s32>(yraw) - 128;
         const u32 vCells = (sz & 3u) + 1u;
 
-        if (static_cast<s32>(y) >= sy &&
-            static_cast<s32>(y) <  sy + static_cast<s32>(vCells * 8u) &&
-            sprCount < lineLimit)
-        {
+const bool onLine = static_cast<s32>(y) >= sy &&
+                             static_cast<s32>(y) <  sy + static_cast<s32>(vCells * 8u);
+
+        if (onLine && sprCount >= lineLimit) {
+            spriteOverflow = true;  // sticky until status register is read
+        } else if (onLine) {
             sprites[sprCount++] = {
                 static_cast<s32>(xraw) - 128,
                 sy,
@@ -583,7 +786,23 @@ void GenVDP::_renderSpriteLine(u32 y) {
                 const u32 bAddr  = (tile * 32u + row * 4u + (c >> 1)) & 0xFFFFu;
                 const u8  nibble = (c & 1u) ? (vram[bAddr] & 0xFu)
                                             : ((vram[bAddr] >> 4) & 0xFu);
-                if (nibble == 0) continue;
+if (nibble == 0) continue;
+
+                // Collision: another opaque sprite pixel already landed here
+                // this scanline. Checked before overwrite so draw order
+                // (back-to-front priority resolution) doesn't mask it.
+                if ((lineSpr[static_cast<u32>(sx)] & 0x7Fu) != 0u)
+                    spriteCollision = true;
+
+                // S/H operator colors: palette line 3, index 14 = highlight,
+                // index 15 = shadow. These mark the pixel below rather than
+                // drawing a real color themselves, and only take effect when
+                // S/H mode is enabled (reg 12 bit 3) — with it off they're
+                // just ordinary opaque pixels using CRAM entry 3*16+14/15.
+                if (palLine == 3u && (nibble == 14u || nibble == 15u) && (regs[12] & 0x08u)) {
+                    lineShMark[static_cast<u32>(sx)] = (nibble == 14u) ? 1u : 2u;
+                    continue;
+                }
 
                 const u8 colorIdx = static_cast<u8>((palLine * 16u + nibble) & 0x3Fu);
                 lineSpr[static_cast<u32>(sx)] = colorIdx | (prio ? 0x80u : 0u);

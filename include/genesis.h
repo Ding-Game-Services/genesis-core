@@ -211,9 +211,10 @@ public:
     u16  ctrlFirst, addrReg;
     u8   addrInc, cdReg;
     u16  vcounter, hcounter;
-    bool vblank, hblank, dmaActive;
+bool vblank, hblank, dmaActive;
     u32  frame;
     bool isPAL, vintPending, dmaFillPending;
+    bool spriteOverflow, spriteCollision;  // status bits 6 and 5
     u16  dmaFillData;
     u32  diagDmaCount;
     bool vramDirty;
@@ -222,9 +223,14 @@ public:
 // Encoding: 0 = transparent, else (colorIndex & 0x3F) | (priority ? 0x80 : 0).
 // colorIndex is the direct CRAM word index (palLine*16+nibble), not a raw palette nibble,
 // so 0x3F is enough range (CRAM has 64 entries) and bit 7 is free for priority.
- u8   lineA[GEN_W];
- u8   lineB[GEN_W];
- u8   lineSpr[GEN_W];
+u8   lineA[GEN_W];
+    u8   lineB[GEN_W];
+    u8   lineSpr[GEN_W];
+    // Shadow/Highlight operator markers (item 6). Sprite palette line 3,
+    // index 14/15 are not real colors on real hardware — they're "operator"
+    // pixels that force highlight/shadow on whatever's underneath instead
+    // of drawing anything themselves. 0 = none, 1 = force highlight, 2 = force shadow.
+    u8   lineShMark[GEN_W];
     void reset();
     u8   read8 (u32 off);
     u16  read16(u32 off);
@@ -246,9 +252,10 @@ private:
     void _writeByCD     (u16 addr, u16 val, u8 cd);
     void _renderLine      (u32 line);
     void _renderScanline  (u32 y);
-    void _renderPlaneLine (bool isB, u32 y);
+void _renderPlaneLine (bool isB, u32 y);
+    void _renderWindowLine(u32 y);
     void _renderSpriteLine(u32 y);
-	void _compositeLine   (u32 y);
+    void _compositeLine   (u32 y);
     struct RGB { u8 r, g, b; };
     RGB  _decodeCRAMColor(u16 color);
 };

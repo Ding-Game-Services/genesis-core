@@ -232,7 +232,14 @@ void GenBus::writeZ80Port(u16 addr, u8 val) {
 // ─────────────────────────────────────────────────────────────────────────────
 u8 GenBus::read8(u32 addr) {
 
-    const u32 a = addr & 0xFFFFFFu;
+const u32 a = addr & 0xFFFFFFu;
+
+    // SRAM — must be checked before the ROM branch below, since on real
+    // carts SRAM is almost always mapped inside 0x200000-0x3FFFFF, which
+    // is *inside* the ROM range. If ROM is checked first, SRAM reads
+    // never reach this check and silently return stale/garbage ROM bytes.
+    if (hasSRAM && a >= sramStart && a <= sramEnd)
+        return sramData[(a - sramStart) & (sramSize - 1u)];
 
     // ROM
     if (a < 0x400000u) {
@@ -245,9 +252,16 @@ u8 GenBus::read8(u32 addr) {
     if (a >= 0xFF0000u)
         return wram[a & 0xFFFFu];
 
-    // SRAM
-    if (hasSRAM && a >= sramStart && a <= sramEnd)
-        return sramData[(a - sramStart) & (sramSize - 1u)];
+// YM2612 status — must be checked before the generic Z80 RAM range
+    // below, since 0xA04000-0xA04003 falls inside 0xA00000-0xA10000.
+    // write8 already special-cased this address range for register
+    // writes; read8 was missing the equivalent, so status reads fell
+    // through to plain Z80 RAM and returned whatever the loaded driver's
+    // first bytes happened to be instead of the real busy/status flag —
+    // any driver byte with bit 7 set would make FM busy-wait loops
+    // (like Sonic's YM2612 init poll) spin forever.
+    if (a >= 0xA04000u && a <= 0xA04003u)
+        return apu ? apu->readYM() : 0xFFu;
 
     // Z80
     if (a >= 0xA00000u && a < 0xA10000u)
@@ -378,10 +392,13 @@ void GenBus::write8(u32 addr, u8 val) {
     }
 
 // WRAM 0xFF0000–0xFFFFFF
+// FIX: write8 writes exactly one byte. The previous code treated `val`
+// (already a u8) as if it were the low byte of a 16-bit word, writing
+// 0 (val>>8, always zero for a u8) to the intended address and the real
+// byte to address+1 instead. Every single-byte WRAM write — flags,
+// counters, byte-built tables — was silently corrupting adjacent memory.
 if (a >= 0xFF0000u) {
-    const u32 wa = a & 0xFFFFu;
-    wram[wa]      = static_cast<u8>(val >> 8);
-    wram[(wa + 1u) & 0xFFFFu] = static_cast<u8>(val);
+    wram[a & 0xFFFFu] = val;
     return;
 }
     // All other addresses: open bus, ignore write

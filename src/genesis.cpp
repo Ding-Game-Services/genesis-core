@@ -117,10 +117,19 @@ void Genesis::runFrame() {
         // cycle budget (instructions don't divide evenly into 488/487
         // cycles). Carry that overshoot into the next line's budget so
         // per-line drift doesn't accumulate uncorrected across the frame.
-        const u32 budget = (static_cast<u32>(overshoot) < cpl)
-                          ? (cpl - static_cast<u32>(overshoot))
-                          : 0u;
-        overshoot = static_cast<s32>(cpu.run(budget));
+// If a prior instruction (e.g. a large DMA — see _processDMA) left
+        // more debt than this whole line's budget, pay it down by cpl and
+        // skip running the CPU this line entirely, rather than calling
+        // cpu.run(0). cpu.run(0) always returns 0 regardless of outstanding
+        // debt (its internal `cycles` was already zeroed by the previous
+        // call), so it was silently wiping out large overshoots in a single
+        // line instead of draining them gradually across scanlines.
+        if (static_cast<u32>(overshoot) >= cpl) {
+            overshoot -= static_cast<s32>(cpl);
+        } else {
+            const u32 budget = cpl - static_cast<u32>(overshoot);
+            overshoot = static_cast<s32>(cpu.run(budget));
+        }
 
         if (vblankStart) {
             if (vdp.regs[1] & 0x20u) {
@@ -185,7 +194,7 @@ bool Genesis::saveState(u8* buf, u32 bufSize, u32* outSize) {
     z80.saveState(&w);
 
     // ── VDP registers and control state ──────────────────────────────────────
-    struct VDPBlock {
+struct VDPBlock {
         u8  regs[GEN_VDP_REG_COUNT];
         u16 addrReg, ctrlFirst;
         u8  addrInc, cdReg;
@@ -193,6 +202,7 @@ bool Genesis::saveState(u8* buf, u32 bufSize, u32* outSize) {
         u8  isPAL, vintPending, dmaFillPending;
         u16 dmaFillData;
         u32 frame;
+        u8  spriteOverflow, spriteCollision;
     } vb;
     std::memcpy(vb.regs, vdp.regs, sizeof(vb.regs));
     vb.addrReg=vdp.addrReg; vb.ctrlFirst=vdp.ctrlFirst;
@@ -201,6 +211,7 @@ bool Genesis::saveState(u8* buf, u32 bufSize, u32* outSize) {
     vb.isPAL=vdp.isPAL?1u:0u; vb.vintPending=vdp.vintPending?1u:0u;
     vb.dmaFillPending=vdp.dmaFillPending?1u:0u;
     vb.dmaFillData=vdp.dmaFillData; vb.frame=vdp.frame;
+    vb.spriteOverflow=vdp.spriteOverflow?1u:0u; vb.spriteCollision=vdp.spriteCollision?1u:0u;
     ding_save_write_block(&w, "VDP_STATE", &vb, sizeof(vb));
     ding_save_write_block(&w, "VRAM",  vdp.vram,  GEN_VRAM_SIZE);
     ding_save_write_block(&w, "CRAM",  vdp.cram,  GEN_CRAM_WORDS  * sizeof(u16));
@@ -268,7 +279,7 @@ bool Genesis::loadState(const u8* buf, u32 size) {
     z80.loadState(&r);
 
     // ── VDP state ─────────────────────────────────────────────────────────────
-    struct VDPBlock {
+struct VDPBlock {
         u8  regs[GEN_VDP_REG_COUNT];
         u16 addrReg, ctrlFirst;
         u8  addrInc, cdReg;
@@ -276,6 +287,7 @@ bool Genesis::loadState(const u8* buf, u32 size) {
         u8  isPAL, vintPending, dmaFillPending;
         u16 dmaFillData;
         u32 frame;
+        u8  spriteOverflow, spriteCollision;
     } vb = {};
     ding_save_read_block(&r, "VDP_STATE", &vb, sizeof(vb), nullptr);
     std::memcpy(vdp.regs, vb.regs, sizeof(vb.regs));
@@ -285,6 +297,7 @@ bool Genesis::loadState(const u8* buf, u32 size) {
     vdp.isPAL=vb.isPAL!=0u; vdp.vintPending=vb.vintPending!=0u;
     vdp.dmaFillPending=vb.dmaFillPending!=0u;
     vdp.dmaFillData=vb.dmaFillData; vdp.frame=vb.frame;
+    vdp.spriteOverflow=vb.spriteOverflow!=0u; vdp.spriteCollision=vb.spriteCollision!=0u;
     ding_save_read_block(&r, "VRAM",  vdp.vram,  GEN_VRAM_SIZE,                   nullptr);
     ding_save_read_block(&r, "CRAM",  vdp.cram,  GEN_CRAM_WORDS  * sizeof(u16),   nullptr);
     ding_save_read_block(&r, "VSRAM", vdp.vsram, GEN_VSRAM_WORDS * sizeof(u16),   nullptr);
@@ -331,9 +344,10 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         "  D4=%08X D5=%08X D6=%08X D7=%08X\n"
         "  A0=%08X A1=%08X A2=%08X A3=%08X\n"
         "  A4=%08X A5=%08X A6=%08X A7=%08X\n"
-        "Z80   PC=%04X  SP=%04X  IFF=%u/%u  IM=%u%s\n"
+"Z80   PC=%04X  SP=%04X  IFF=%u/%u  IM=%u%s\n"
         "  AF=%02X%02X  BC=%02X%02X  DE=%02X%02X  HL=%02X%02X\n"
-        "  IX=%04X  IY=%04X\n",
+        "  IX=%04X  IY=%04X\n"
+        "  BUS: z80Reset=%u z80BusReq=%u z80Bank=%05X\n",
         cpu.pc, cpu.sr,
         (cpu.sr >> 13) & 1, (cpu.sr >> 15) & 1, ipl,
         (cpu.sr >> 4) & 1, (cpu.sr >> 3) & 1, (cpu.sr >> 2) & 1,
@@ -346,7 +360,14 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         z80.PC, z80.SP, z80.IFF1, z80.IFF2, z80.IM,
         z80.halted ? " [HALTED]" : "",
         z80.A, z80.F, z80.B, z80.C, z80.D, z80.E, z80.H, z80.L,
-        z80.IX, z80.IY);
+        z80.IX, z80.IY,
+        // Previously invisible in diagnostics — z80Reset/z80BusReq being
+        // stuck true would silently explain the Z80 never executing,
+        // indistinguishable from that just being a legitimate current
+        // Z80 register snapshot. Exposing them directly lets us confirm
+        // whether the game ever actually released the Z80, instead of
+        // inferring it from register state alone.
+        bus.z80Reset ? 1u : 0u, bus.z80BusReq ? 1u : 0u, bus.z80Bank);
 }
 
 void Genesis::diagVideo(char* out, u32 outSize) {
