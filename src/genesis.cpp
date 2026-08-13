@@ -344,10 +344,9 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         "  D4=%08X D5=%08X D6=%08X D7=%08X\n"
         "  A0=%08X A1=%08X A2=%08X A3=%08X\n"
         "  A4=%08X A5=%08X A6=%08X A7=%08X\n"
-"Z80   PC=%04X  SP=%04X  IFF=%u/%u  IM=%u%s\n"
+        "Z80   PC=%04X  SP=%04X  IFF=%u/%u  IM=%u%s\n"
         "  AF=%02X%02X  BC=%02X%02X  DE=%02X%02X  HL=%02X%02X\n"
-        "  IX=%04X  IY=%04X\n"
-        "  BUS: z80Reset=%u z80BusReq=%u z80Bank=%05X\n",
+        "  IX=%04X  IY=%04X\n",
         cpu.pc, cpu.sr,
         (cpu.sr >> 13) & 1, (cpu.sr >> 15) & 1, ipl,
         (cpu.sr >> 4) & 1, (cpu.sr >> 3) & 1, (cpu.sr >> 2) & 1,
@@ -360,14 +359,7 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         z80.PC, z80.SP, z80.IFF1, z80.IFF2, z80.IM,
         z80.halted ? " [HALTED]" : "",
         z80.A, z80.F, z80.B, z80.C, z80.D, z80.E, z80.H, z80.L,
-        z80.IX, z80.IY,
-        // Previously invisible in diagnostics — z80Reset/z80BusReq being
-        // stuck true would silently explain the Z80 never executing,
-        // indistinguishable from that just being a legitimate current
-        // Z80 register snapshot. Exposing them directly lets us confirm
-        // whether the game ever actually released the Z80, instead of
-        // inferring it from register state alone.
-        bus.z80Reset ? 1u : 0u, bus.z80BusReq ? 1u : 0u, bus.z80Bank);
+        z80.IX, z80.IY);
 }
 
 void Genesis::diagVideo(char* out, u32 outSize) {
