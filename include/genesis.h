@@ -73,16 +73,49 @@ public:
     void write(u32 bank, u8 reg, u8 val);
     u8   read() const;
     void clock(float* buf, u32 count);
+    float renderSample();   // advances state by 1/GEN_AUDIO_RATE, returns mono sample
+private:
+    // v1 FM engine: functional 4-op/6-channel synthesis with simplified
+    // (non-exponential-table) envelope timing. Detune (DT1) and LFO are
+    // not yet applied — deferred alongside exact hardware rate tables.
+    struct FMOperator {
+        double phase;
+        float  envLevel;   // 0..1 linear envelope amplitude
+        u8     envState;   // 0=attack 1=decay1 2=decay2/sustain 3=release 4=idle
+        bool   keyOn;
+        FMOperator() : phase(0.0), envLevel(0.0f), envState(4), keyOn(false) {}
+    };
+    struct FMChannel {
+        FMOperator op[4];
+        double fbHist[2];   // op1 self-feedback history (last two samples)
+        FMChannel() { fbHist[0] = fbHist[1] = 0.0; }
+    };
+    FMChannel ch_[6];
+
+    void   _keyOnOff(u8 val);
+    double _channelFreqHz(u32 ch) const;
+    float  _stepEnvelope(FMOperator& o, u32 ar, u32 d1r, u32 d2r, u32 rr, u32 sl);
+    float  _renderOperator(u32 ch, u32 opIdx, double freqHz, float modInput);
 };
 
 class SN76489 {
 public:
-    u8 regs[8];
+    u8 regs[8];   // kept for diagnostics; not used by synthesis path
     u8 latch;
+
+    // Synthesis state
+    u16 freq[3];        // 10-bit tone frequency, channels 0-2
+    u8  atten[4];        // 4-bit attenuation, channels 0-2 + noise (index 3)
+    u8  noiseCtrl;       // bit2 = FB (white/periodic), bits1:0 = rate select
+    double tonePhase[3];
+    double noisePhase;
+    u16 noiseShift;
+
     SN76489();
     void reset();
     void write(u8 val);
     void clock(float* buf, u32 count);
+    float renderSample();  // advances state by 1/GEN_AUDIO_RATE, returns mono sample
 };
 
 class GenAPU {

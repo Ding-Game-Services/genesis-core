@@ -173,11 +173,16 @@ void GenBus::_ioWrite8(u32 addr, u8 val) {
         case 0x0B:
             padCtrl[1] = val;
             break;
-        // Data port 1: writing with TH configured as output latches TH state.
-        case 0x02:
+// Data port 1/2: writing with TH configured as output latches TH
+        // state. These live at the ODD offsets (0x03/0x05), matching the
+        // read side in _ioRead8 — the previous 0x02/0x04 (even) never
+        // matched a real byte write to 0xA10003/0xA10005, so TH could
+        // never toggle and the pad got stuck in the TH=1 phase forever
+        // (D-pad/B/C readable, A/Start never readable).
+        case 0x03:
             if (padCtrl[0] & 0x40u) padTH[0] = (val >> 6) & 1u;
             break;
-        case 0x04:
+        case 0x05:
             if (padCtrl[1] & 0x40u) padTH[1] = (val >> 6) & 1u;
             break;
         default:
