@@ -280,6 +280,12 @@ DING_EXPORT size_t ding_diag_video_state(char* buf, size_t size) {
     return (size_t)std::strlen(buf);
 }
 
+DING_EXPORT size_t ding_diag_trace_state(char* buf, size_t size) {
+    if (!s_gen || !buf) return 0;
+    s_gen->diagTrace(buf, (u32)size);
+    return (size_t)std::strlen(buf);
+}
+
 DING_EXPORT u8 ding_has_error() {
     return (s_gen && s_gen->errorFlag) ? 1 : 0;
 }

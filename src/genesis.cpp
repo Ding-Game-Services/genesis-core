@@ -107,8 +107,11 @@ void Genesis::pressButton(u32 pad, u32 btn, bool pressed) {
 void Genesis::runFrame() {
     for (u32 line = 0; line < linesFrame; line++) {
 
-        if (!bus.z80Reset && !bus.z80BusReq) {
+if (!bus.z80Reset && !bus.z80BusReq) {
             z80.run(z80cpl);
+            z80RunCount++;
+        } else {
+            z80SkipCount++;
         }
 
         const bool vblankStart = vdp.tickLine(line, isPAL);
@@ -346,7 +349,8 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         "  A4=%08X A5=%08X A6=%08X A7=%08X\n"
         "Z80   PC=%04X  SP=%04X  IFF=%u/%u  IM=%u%s\n"
         "  AF=%02X%02X  BC=%02X%02X  DE=%02X%02X  HL=%02X%02X\n"
-        "  IX=%04X  IY=%04X\n",
+        "  IX=%04X  IY=%04X\n"
+        "  overshoot=%d  dmaCount=%u\n",
         cpu.pc, cpu.sr,
         (cpu.sr >> 13) & 1, (cpu.sr >> 15) & 1, ipl,
         (cpu.sr >> 4) & 1, (cpu.sr >> 3) & 1, (cpu.sr >> 2) & 1,
@@ -359,7 +363,8 @@ void Genesis::diagCPU(char* out, u32 outSize) {
         z80.PC, z80.SP, z80.IFF1, z80.IFF2, z80.IM,
         z80.halted ? " [HALTED]" : "",
         z80.A, z80.F, z80.B, z80.C, z80.D, z80.E, z80.H, z80.L,
-        z80.IX, z80.IY);
+        z80.IX, z80.IY,
+        overshoot, vdp.diagDmaCount);
 }
 
 void Genesis::diagVideo(char* out, u32 outSize) {
@@ -385,6 +390,17 @@ void Genesis::diagVideo(char* out, u32 outSize) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
+void Genesis::diagTrace(char* out, u32 outSize) {
+int used = std::snprintf(out, outSize, "totalSteps=%llu  z80Run=%u  z80Skip=%u  z80Reset=%u  z80BusReq=%u\nTRACE (oldest->newest):\n",
+        static_cast<unsigned long long>(cpu.totalSteps), z80RunCount, z80SkipCount,
+        bus.z80Reset ? 1u : 0u, bus.z80BusReq ? 1u : 0u);
+		for (u32 i = 0; i < M68K::TRACE_SIZE && used < static_cast<int>(outSize) - 8; i++) {
+        const u32 idx = (cpu.traceIdx + i) % M68K::TRACE_SIZE;
+        used += std::snprintf(out + used, outSize - static_cast<u32>(used),
+            "%06X%s", cpu.traceBuf[idx], ((i & 7u) == 7u) ? "\n" : " ");
+    }
+}
+
 void Genesis::_setError(const char* msg) {
     errorFlag = true;
     std::snprintf(errorMsg, sizeof(errorMsg), "%s", msg);

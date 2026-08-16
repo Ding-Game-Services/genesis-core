@@ -13,9 +13,10 @@ static inline u32 popcount32(u32 n) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor / reset
 // ─────────────────────────────────────────────────────────────────────────────
-M68K::M68K(GenBus* b) : bus(b) {
+M68K::M68K(GenBus* b) : bus(b), traceIdx(0), totalSteps(0) {
     std::memset(d, 0, sizeof(d));
     std::memset(a, 0, sizeof(a));
+    std::memset(traceBuf, 0, sizeof(traceBuf));
     pc = 0; sr = 0x2700; stopped = false; usp = 0; cycles = 0;
 }
 
@@ -381,6 +382,10 @@ void M68K::step() {
         cycles += 4;
         return;
     }
+
+    traceBuf[traceIdx] = pc;
+    traceIdx = (traceIdx + 1) % TRACE_SIZE;
+    totalSteps++;
 
     u16 op = fetch16();
 

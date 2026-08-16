@@ -188,6 +188,12 @@ public:
     void step();
     bool interrupt(u32 level);
     void exception(u32 vector);
+	
+	    // Debug: ring buffer of the last N instruction start addresses.
+ static constexpr u32 TRACE_SIZE = 64;
+    u32 traceBuf[TRACE_SIZE];
+    u32 traceIdx;
+    u64 totalSteps;
 private:
     s32 sext8 (u32 v) { return static_cast<s32>(static_cast<s8> (static_cast<u8> (v))); }
     s32 sext16(u32 v) { return static_cast<s32>(static_cast<s16>(static_cast<u16>(v))); }
@@ -362,8 +368,11 @@ public:
     void runFrame();
     bool saveState(u8* buf, u32 bufSize, u32* outSize);
     bool loadState(const u8* buf, u32 size);
-    void diagCPU  (char* out, u32 outSize);
+void diagCPU  (char* out, u32 outSize);
     void diagVideo(char* out, u32 outSize);
+void diagTrace(char* out, u32 outSize);
+    u32 z80RunCount = 0;
+    u32 z80SkipCount = 0;
 private:
     void _setError(const char* msg);
 };
