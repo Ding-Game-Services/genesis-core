@@ -134,9 +134,10 @@ if (!bus.z80Reset && !bus.z80BusReq) {
             overshoot = static_cast<s32>(cpu.run(budget));
         }
 
-        if (vblankStart) {
+if (vblankStart) {
             if (vdp.regs[1] & 0x20u) {
-                cpu.interrupt(6);
+                vintRequestCount++;
+                if (cpu.interrupt(6)) vintAcceptCount++;
             }
             if (!bus.z80Reset && !bus.z80BusReq) {
                 z80.interrupt();
@@ -370,9 +371,17 @@ void Genesis::diagCPU(char* out, u32 outSize) {
 void Genesis::diagVideo(char* out, u32 outSize) {
     if (!out || outSize == 0) return;
     // Print VDP registers in groups of 8
-    int used = std::snprintf(out, outSize,
+ int used = std::snprintf(out, outSize,
         "VDP  frame=%u  vctr=%u  vblank=%u  hint=%u  dma=%u\n"
         "     display=%u  vint_en=%u  hint_en=%u\n"
+        "     highVramWrites=%u  lastAddr=%04X  lastVal=%02X\n"
+        "     ntRealWrites=%u  ntLastAddr=%04X  ntLastVal=%02X\n"
+        "     fillDmaCount=%u\n"
+        "     fillFirst: dest=%04X len=%04X cd=%02X\n"
+        "     fillLast:  dest=%04X len=%04X cd=%02X\n"
+        "     copyOverlapCount=%u\n"
+        "     copyFirst: src=%06X dest=%04X len=%04X cd=%02X\n"
+        "     copyLast:  src=%06X dest=%04X len=%04X cd=%02X\n"
         "Regs:\n",
         vdp.frame, vdp.vcounter,
         vdp.vblank ? 1u : 0u,
@@ -380,10 +389,24 @@ void Genesis::diagVideo(char* out, u32 outSize) {
         vdp.dmaActive ? 1u : 0u,
         (vdp.regs[1] & 0x40u) ? 1u : 0u,
         (vdp.regs[1] & 0x20u) ? 1u : 0u,
-        (vdp.regs[0] & 0x10u) ? 1u : 0u);
+        (vdp.regs[0] & 0x10u) ? 1u : 0u,
+        vdp.highVramWriteCount, static_cast<unsigned>(vdp.highVramLastAddr), static_cast<unsigned>(vdp.highVramLastVal),
+        vdp.nametableRealDataCount, static_cast<unsigned>(vdp.nametableRealLastAddr), static_cast<unsigned>(vdp.nametableRealLastVal),
+        vdp.fillDmaTriggerCount,
+        static_cast<unsigned>(vdp.fillFirstDestAddr), static_cast<unsigned>(vdp.fillFirstLen), static_cast<unsigned>(vdp.fillFirstCd),
+        static_cast<unsigned>(vdp.fillLastDestAddr), static_cast<unsigned>(vdp.fillLastLen), static_cast<unsigned>(vdp.fillLastCd),
+        vdp.copyOverlapCount,
+        static_cast<unsigned>(vdp.copyOverlapFirstSrc), static_cast<unsigned>(vdp.copyOverlapFirstDest), static_cast<unsigned>(vdp.copyOverlapFirstLen), static_cast<unsigned>(vdp.copyOverlapFirstCd),
+        static_cast<unsigned>(vdp.copyOverlapLastSrc), static_cast<unsigned>(vdp.copyOverlapLastDest), static_cast<unsigned>(vdp.copyOverlapLastLen), static_cast<unsigned>(vdp.copyOverlapLastCd));
     for (u32 i = 0; i < GEN_VDP_REG_COUNT && used < static_cast<int>(outSize)-8; i++) {
         used += std::snprintf(out + used, outSize - static_cast<u32>(used),
             "  R%02u=%02X%s", i, vdp.regs[i], ((i & 7u)==7u||i==GEN_VDP_REG_COUNT-1)?"\n":"");
+    }
+    used += std::snprintf(out + used, outSize - static_cast<u32>(used), "Reg21-23 writes (oldest->newest):\n");
+    for (u32 i = 0; i < vdp.regLogCount && used < static_cast<int>(outSize) - 8; i++) {
+        const u32 idx = (vdp.regLogIdx + GenVDP::REG_LOG_SIZE - vdp.regLogCount + i) % GenVDP::REG_LOG_SIZE;
+ used += std::snprintf(out + used, outSize - static_cast<u32>(used),
+            "  PC=%06X R%u=%02X%s", vdp.regLog[idx].pc, vdp.regLog[idx].reg, vdp.regLog[idx].val, ((i & 1u)==1u) ? "\n" : "");
     }
 }
 
@@ -391,9 +414,11 @@ void Genesis::diagVideo(char* out, u32 outSize) {
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 void Genesis::diagTrace(char* out, u32 outSize) {
-int used = std::snprintf(out, outSize, "totalSteps=%llu  z80Run=%u  z80Skip=%u  z80Reset=%u  z80BusReq=%u\nTRACE (oldest->newest):\n",
+int used = std::snprintf(out, outSize, "totalSteps=%llu  z80Run=%u  z80Skip=%u  z80Reset=%u  z80BusReq=%u  z80ResetWrites=%u  z80ResetLastVal=%02X  vintReq=%u  vintAccept=%u\nTRACE (oldest->newest):\n",
         static_cast<unsigned long long>(cpu.totalSteps), z80RunCount, z80SkipCount,
-        bus.z80Reset ? 1u : 0u, bus.z80BusReq ? 1u : 0u);
+        bus.z80Reset ? 1u : 0u, bus.z80BusReq ? 1u : 0u,
+        bus.z80ResetWriteCount, bus.z80ResetLastVal,
+        vintRequestCount, vintAcceptCount);
 		for (u32 i = 0; i < M68K::TRACE_SIZE && used < static_cast<int>(outSize) - 8; i++) {
         const u32 idx = (cpu.traceIdx + i) % M68K::TRACE_SIZE;
         used += std::snprintf(out + used, outSize - static_cast<u32>(used),

@@ -29,8 +29,22 @@ vintPending    = false;
     dmaFillPending = false;
     diagDmaCount   = 0;
     vramDirty      = false;
-    spriteOverflow  = false;
+ spriteOverflow  = false;
     spriteCollision = false;
+highVramWriteCount = 0;
+    highVramLastAddr   = 0;
+    highVramLastVal    = 0;
+    nametableRealDataCount = 0;
+    nametableRealLastAddr  = 0;
+    nametableRealLastVal   = 0;
+    fillDmaTriggerCount = 0;
+    fillFirstDestAddr = 0; fillFirstLen = 0; fillFirstCd = 0;
+    fillLastDestAddr  = 0; fillLastLen  = 0; fillLastCd  = 0;
+    copyOverlapCount = 0;
+    copyOverlapFirstSrc = 0; copyOverlapFirstDest = 0; copyOverlapFirstLen = 0; copyOverlapFirstCd = 0;
+copyOverlapLastSrc  = 0; copyOverlapLastDest  = 0; copyOverlapLastLen  = 0; copyOverlapLastCd  = 0;
+    std::memset(regLog, 0, sizeof(regLog));
+    regLogIdx = 0; regLogCount = 0;
 }
 
 void GenVDP::reset() {
@@ -55,8 +69,21 @@ vintPending    = false;
     dmaFillData    = 0;
     dmaFillPending = false;
     vramDirty      = false;
-    spriteOverflow  = false;
-    spriteCollision = false;
+ spriteOverflow  = false;
+highVramWriteCount = 0;
+    highVramLastAddr   = 0;
+    highVramLastVal    = 0;
+    nametableRealDataCount = 0;
+    nametableRealLastAddr  = 0;
+    nametableRealLastVal   = 0;
+    fillDmaTriggerCount = 0;
+    fillFirstDestAddr = 0; fillFirstLen = 0; fillFirstCd = 0;
+    fillLastDestAddr  = 0; fillLastLen  = 0; fillLastCd  = 0;
+    copyOverlapCount = 0;
+    copyOverlapFirstSrc = 0; copyOverlapFirstDest = 0; copyOverlapFirstLen = 0; copyOverlapFirstCd = 0;
+copyOverlapLastSrc  = 0; copyOverlapLastDest  = 0; copyOverlapLastLen  = 0; copyOverlapLastCd  = 0;
+    std::memset(regLog, 0, sizeof(regLog));
+    regLogIdx = 0; regLogCount = 0;
 	regs[1] = 0x40; // Force Display Enable bit to 1
 
 }
@@ -163,6 +190,15 @@ u16 GenVDP::_status() {
 // Byte path (independent state):
 //   Two consecutive byte writes form a register write word.
 // ─────────────────────────────────────────────────────────────────────────────
+void GenVDP::_logRegWrite(u32 r, u8 v) {
+    if (r < 21u || r > 23u) return;
+    regLog[regLogIdx].reg = r;
+    regLog[regLogIdx].val = v;
+    regLog[regLogIdx].pc  = (bus && bus->m68k) ? bus->m68k->pc : 0u;
+    regLogIdx = (regLogIdx + 1u) % REG_LOG_SIZE;
+    if (regLogCount < REG_LOG_SIZE) regLogCount++;
+}
+
 void GenVDP::_writeCtrl(u16 val, bool isByte) {
 	    if (isByte) {
         if (!ctrlPendByte) {
@@ -180,9 +216,9 @@ void GenVDP::_writeCtrl(u16 val, bool isByte) {
         ctrlPendWord = false; 
         const u32 r = (val >> 8) & 0x1Fu;
         const u8  v = static_cast<u8>(val & 0xFFu);
-        if (r < GEN_VDP_REG_COUNT) {
+if (r < GEN_VDP_REG_COUNT) {
             regs[r] = v;
-
+            _logRegWrite(r, v);
             if (r == 15) addrInc = v;
         }
         return;
@@ -225,8 +261,9 @@ void GenVDP::_processCtrlWord(u16 w) {
     if ((w & 0xC000u) == 0x8000u) {
         const u32 r = (w >> 8) & 0x1Fu;
         const u8  v = static_cast<u8>(w & 0xFFu);
-        if (r < GEN_VDP_REG_COUNT) {
+if (r < GEN_VDP_REG_COUNT) {
             regs[r] = v;
+            _logRegWrite(r, v);
             if (r == 15) addrInc = v;
         }
     }
@@ -259,12 +296,14 @@ void GenVDP::_writeVRAMByte(int bytePos, u8 val) {
     const u8 cd = cdReg;
     const u16 addr = addrReg;
 
-    if ((cd & 0x0F) == 1) {
-        // Odd-address byte swap (Charles MacDonald hw notes): a word write
-        // to an odd VRAM address lands with hi/lo swapped relative to the
-        // normal even-address case. Only affects raw VRAM writes, not CRAM/VSRAM.
+ if ((cd & 0x0F) == 1) {
         const int pos = (addr & 1u) ? (1 - bytePos) : bytePos;
-        vram[(addr + pos) & 0xFFFFu] = val;
+        const u16 dest = (addr + pos) & 0xFFFFu;
+        vram[dest] = val;
+  if (dest >= 0xC000u) {
+            highVramWriteCount++; highVramLastAddr = dest; highVramLastVal = val;
+            if (dest <= 0xE0FFu && val != 0xFFu) { nametableRealDataCount++; nametableRealLastAddr = dest; nametableRealLastVal = val; }
+        }
     } else if (cd == 3) {
         u16 current = cram[(addr >> 1) & 0x3Fu];
         if (bytePos == 0) current = (current & 0x00FF) | (val << 8);
@@ -303,6 +342,27 @@ void GenVDP::_processDMA(u8 cd) {
     const u32 srcAddr = (static_cast<u32>(regs[23] & 0x7Fu) << 17)
                       | (static_cast<u32>(regs[22])         <<  9)
                       | (static_cast<u32>(regs[21])         <<  1);
+ if (dmaMode == 2) {
+        if (fillDmaTriggerCount == 0) {
+            fillFirstDestAddr = addrReg; fillFirstLen = static_cast<u16>(dmaLen); fillFirstCd = cd;
+        }
+        fillLastDestAddr = addrReg; fillLastLen = static_cast<u16>(dmaLen); fillLastCd = cd;
+        fillDmaTriggerCount++;
+    }
+    if ((dmaMode == 0 || dmaMode == 1) && (cd & 0xFu) == 1u) {
+        const u32 destStart = addrReg;
+        const u32 destEnd   = addrReg + dmaLen * 2u;  // word copy, 2 bytes/unit
+        const bool overlapsNametables = (destStart <= 0xE1FFu) && (destEnd >= 0xC000u);
+        if (overlapsNametables) {
+            if (copyOverlapCount == 0) {
+                copyOverlapFirstSrc = srcAddr; copyOverlapFirstDest = static_cast<u16>(addrReg);
+                copyOverlapFirstLen = static_cast<u16>(dmaLen); copyOverlapFirstCd = cd;
+            }
+            copyOverlapLastSrc = srcAddr; copyOverlapLastDest = static_cast<u16>(addrReg);
+            copyOverlapLastLen = static_cast<u16>(dmaLen); copyOverlapLastCd = cd;
+            copyOverlapCount++;
+        }
+    }
     switch (dmaMode) {
         case 0: case 1: _dmaMemoryCopy(srcAddr, dmaLen, cd); break;
         case 2:         _dmaVRAMFill  (dmaLen, cd);          break;
@@ -360,13 +420,13 @@ void GenVDP::_dmaMemoryCopy(u32 srcAddr, u32 len, u8 cd) {
         const u8  lo   = bus->read8((bank | ((bankOff + 1u) & 0x01FFFFu)));
         const u16 word = (static_cast<u16>(hi) << 8) | lo;
         const u16 addr = addrReg;
-        if (d == 1) {
-            // Odd-address byte swap, same rule as _writeVRAMByte: a word
-            // landing on an odd VRAM address gets hi/lo swapped relative
-            // to the even-address case. DMA previously wrote hi/lo straight
-            // through regardless of addr parity, diverging from real hardware.
+if (d == 1) {
             if (addr & 1u) { vram[addr & 0xFFFFu] = lo; vram[(addr + 1u) & 0xFFFFu] = hi; }
             else            { vram[addr & 0xFFFFu] = hi; vram[(addr + 1u) & 0xFFFFu] = lo; }
+if (addr >= 0xC000u) {
+                highVramWriteCount++; highVramLastAddr = addr; highVramLastVal = hi;
+                if (addr <= 0xE0FFu && (hi != 0xFFu || lo != 0xFFu)) { nametableRealDataCount++; nametableRealLastAddr = addr; nametableRealLastVal = hi; }
+            }
         }
         else if (d == 3) { cram [(addr >> 1) & 0x3Fu]  = word; }
         else if (d == 5) { vsram[(addr >> 1) & 0x27u]  = word; }
@@ -378,8 +438,12 @@ void GenVDP::_dmaMemoryCopy(u32 srcAddr, u32 len, u8 cd) {
 
 void GenVDP::_dmaVRAMFill(u32 len, u8 cd) {
     const u8 fillByte = static_cast<u8>(dmaFillData >> 8);
-    for (u32 i = 0; i < len; i++) {
+ for (u32 i = 0; i < len; i++) {
         vram[addrReg & 0xFFFFu] = fillByte;
+if ((addrReg & 0xFFFFu) >= 0xC000u) {
+            highVramWriteCount++; highVramLastAddr = addrReg; highVramLastVal = fillByte;
+            if ((addrReg & 0xFFFFu) <= 0xE0FFu && fillByte != 0xFFu) { nametableRealDataCount++; nametableRealLastAddr = addrReg; nametableRealLastVal = fillByte; }
+        }
         // Fill honors the auto-increment register (reg 15), same as normal
         // data-port writes — was hardcoded to +1, which only happened to
         // match the common case where addrInc==1 during fills.
@@ -394,8 +458,12 @@ void GenVDP::_dmaVRAMCopy(u32 len, u8 /*cd*/) {
     // entirely and mixes the DMA-mode register into the address.
     // Correct: VRAM copy source is a 16-bit VRAM address in regs[22]:regs[21].
     u16 src = (static_cast<u16>(regs[22]) << 8) | regs[21];
-    for (u32 i = 0; i < len; i++) {
+ for (u32 i = 0; i < len; i++) {
         vram[addrReg & 0xFFFFu] = vram[src & 0xFFFFu];
+ if ((addrReg & 0xFFFFu) >= 0xC000u) {
+            highVramWriteCount++; highVramLastAddr = addrReg; highVramLastVal = vram[addrReg & 0xFFFFu];
+            if ((addrReg & 0xFFFFu) <= 0xE0FFu && vram[addrReg & 0xFFFFu] != 0xFFu) { nametableRealDataCount++; nametableRealLastAddr = addrReg; nametableRealLastVal = vram[addrReg & 0xFFFFu]; }
+        }
         // Source always steps by 1 byte per hardware behavior — only the
         // destination (addrReg) honors addrInc.
         src     = (src + 1u) & 0xFFFFu;

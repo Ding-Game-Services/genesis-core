@@ -11,9 +11,11 @@ GenBus::GenBus()
     , sramStart(0)
     , sramEnd(0)
     , sramSize(0)
-    , z80BusReq(false)
+  , z80BusReq(false)
     , z80Reset(true)
     , z80Bank(0)
+    , z80ResetWriteCount(0)
+    , z80ResetLastVal(0)
     , isPAL(false)
     , vdp(nullptr)
     , z80(nullptr)
@@ -253,8 +255,11 @@ const u32 a = addr & 0xFFFFFFu;
         return 0xFF;
     }
 
-    // WRAM
-    if (a >= 0xFF0000u)
+// WRAM — real hardware only decodes the low 16 bits for the WRAM
+    // chip select, so it's mirrored across the entire E00000-FFFFFF
+    // region, not just FF0000-FFFFFF. Games occasionally use addresses
+    // in this wider range (e.g. as DMA sources) and rely on the mirror.
+    if (a >= 0xE00000u)
         return wram[a & 0xFFFFu];
 
 // YM2612 status — must be checked before the generic Z80 RAM range
@@ -306,8 +311,8 @@ u16 GenBus::read16(u32 addr) {
         return 0xFFFFu;
     }
 
-    // WRAM fast path
-   if (a >= 0xFF0000u){
+    // WRAM fast path — mirrored across E00000-FFFFFF, see read8.
+   if (a >= 0xE00000u){
         const u32 wa = a & 0xFFFFu;
         return (static_cast<u16>(wram[wa]) << 8) | wram[(wa + 1u) & 0xFFFFu];
     }
@@ -380,8 +385,10 @@ void GenBus::write8(u32 addr, u8 val) {
         return;
     }
 
-    // Z80 RESET  0xA11200–0xA11201
+// Z80 RESET  0xA11200–0xA11201
     if (a == 0xA11200u || a == 0xA11201u) {
+        z80ResetWriteCount++;
+        z80ResetLastVal = val;
         z80Reset = (val & 1u) == 0u;
         return;
     }
@@ -396,13 +403,13 @@ void GenBus::write8(u32 addr, u8 val) {
         return;
     }
 
-// WRAM 0xFF0000–0xFFFFFF
+// WRAM — mirrored across E00000-FFFFFF, see read8.
 // FIX: write8 writes exactly one byte. The previous code treated `val`
 // (already a u8) as if it were the low byte of a 16-bit word, writing
 // 0 (val>>8, always zero for a u8) to the intended address and the real
 // byte to address+1 instead. Every single-byte WRAM write — flags,
 // counters, byte-built tables — was silently corrupting adjacent memory.
-if (a >= 0xFF0000u) {
+if (a >= 0xE00000u) {
     wram[a & 0xFFFFu] = val;
     return;
 }
@@ -416,8 +423,8 @@ void GenBus::write16(u32 addr, u16 val) {
     const u32 a = addr & 0xFFFFFFu;
 	
 	
-    // WRAM fast path
-    if (a >= 0xFF0000u) {
+ // WRAM fast path — mirrored across E00000-FFFFFF, see read8.
+    if (a >= 0xE00000u) {
         const u32 wa = a & 0xFFFFu;
         wram[wa]      = static_cast<u8>(val >> 8);
         wram[(wa + 1u) & 0xFFFFu] = static_cast<u8>(val);
@@ -430,9 +437,13 @@ void GenBus::write16(u32 addr, u16 val) {
         return;
     }
 
-    // Z80 control / BUSREQ area — fall through to write8 × 2
+    // Z80 control / BUSREQ area — these are 8-bit peripherals wired only
+    // to the low byte of the data bus (D0-D7); real hardware latches
+    // only the low byte on a 16-bit word write. Previously both bytes
+    // were applied via two independent write8 calls, so a single word
+    // write like MOVE.W #$0100,($A11200) would set z80Reset then
+    // immediately clear it again in the same instruction.
     if (a >= 0xA11100u && a < 0xA11300u) {
-        write8(addr,      static_cast<u8>(val >> 8));
         write8(addr + 1u, static_cast<u8>(val));
         return;
     }

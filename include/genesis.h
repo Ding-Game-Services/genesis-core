@@ -147,9 +147,15 @@ public:
     u32 padState[GEN_PAD_COUNT];
     u8  padCtrl [GEN_PAD_COUNT];
     u8  padTH   [GEN_PAD_COUNT];
-    bool z80BusReq;
+ bool z80BusReq;
     bool z80Reset;
     u32  z80Bank;
+    // Diagnostic-only: tracks every write attempt to the Z80 RESET
+    // register ($A11200/$A11201), regardless of resulting value, so we
+    // can tell "68k never tried to release Z80" apart from "68k tried
+    // but the write didn't stick." Not part of save state.
+    u32  z80ResetWriteCount;
+    u8   z80ResetLastVal;
     bool isPAL;
     GenVDP* vdp;
     GenZ80* z80;
@@ -256,7 +262,48 @@ bool vblank, hblank, dmaActive;
     bool spriteOverflow, spriteCollision;  // status bits 6 and 5
     u16  dmaFillData;
     u32  diagDmaCount;
-    bool vramDirty;
+bool vramDirty;
+    // Diagnostic-only: counts writes landing at VRAM address >= 0xC000
+    // (nametable region) from ANY path — CPU port writes or any DMA
+    // mode — plus the last address/value written there, if any.
+    u32  highVramWriteCount;
+    u16  highVramLastAddr;
+    u8   highVramLastVal;
+    // Narrower diagnostic: counts writes to 0xC000-0xE0FF (the actual
+    // nametable range) where the value is NOT the 0xFF fill sentinel —
+    // i.e. real tile-index data. Answers "has real data ever landed
+    // here at all" independent of how many fill/clear writes happened.
+ u32  nametableRealDataCount;
+    u16  nametableRealLastAddr;
+    u8   nametableRealLastVal;
+    // Diagnostic-only: captures VRAM-fill DMA (mode 2) parameters.
+    // "First" is latched once (never overwritten) so we see the very
+    // first fill that ever ran. "Last" updates every time, so comparing
+    // the two shows whether fill length/dest is changing over time or
+    // it's the same fill re-firing repeatedly.
+    u32  fillDmaTriggerCount;
+    u16  fillFirstDestAddr, fillFirstLen;
+    u8   fillFirstCd;
+u16  fillLastDestAddr, fillLastLen;
+    u8   fillLastCd;
+    // Diagnostic-only: same idea, but for memory->VRAM copy DMA (mode
+    // 0/1) whose destination range overlaps the nametables (0xC000-
+    // 0xE1FF). Fill DMA was ruled out as the source of the post-write
+    // 0xFF stomping; this checks whether a copy is the culprit instead.
+    u32  copyOverlapCount;
+    u32  copyOverlapFirstSrc, copyOverlapLastSrc;
+    u16  copyOverlapFirstDest, copyOverlapFirstLen;
+    u16  copyOverlapLastDest,  copyOverlapLastLen;
+u8   copyOverlapFirstCd, copyOverlapLastCd;
+    // Diagnostic-only: ring buffer of the last 8 writes to VDP regs
+    // 21-23 (DMA source bank/mode registers) — logs exactly what value
+    // was written to which register, in order, so we can see the real
+    // write sequence leading into a bad DMA instead of inferring it.
+    static constexpr u32 REG_LOG_SIZE = 8;
+    struct RegLogEntry { u32 reg; u8 val; u32 pc; };
+    RegLogEntry regLog[REG_LOG_SIZE];
+    u32 regLogIdx;
+    u32 regLogCount;
     explicit GenVDP(GenBus* bus);
  // Per-line compositing buffers (item 1: priority bit support).
 // Encoding: 0 = transparent, else (colorIndex & 0x3F) | (priority ? 0x80 : 0).
@@ -296,7 +343,8 @@ void _renderPlaneLine (bool isB, u32 y);
     void _renderSpriteLine(u32 y);
     void _compositeLine   (u32 y);
     struct RGB { u8 r, g, b; };
-    RGB  _decodeCRAMColor(u16 color);
+ RGB  _decodeCRAMColor(u16 color);
+    void _logRegWrite(u32 r, u8 v);
 };
 
 class GenZ80 {
@@ -371,8 +419,15 @@ public:
 void diagCPU  (char* out, u32 outSize);
     void diagVideo(char* out, u32 outSize);
 void diagTrace(char* out, u32 outSize);
-    u32 z80RunCount = 0;
+ u32 z80RunCount = 0;
     u32 z80SkipCount = 0;
+    // Diagnostic-only: how many times VBlank (level 6) was requested vs.
+    // actually accepted by the CPU. If requests climb but accepts never
+    // do, the interrupt is being permanently masked (IPL never drops
+    // below 7), which would explain a VBlank-driven VRAM transfer queue
+    // never flushing.
+    u32 vintRequestCount = 0;
+    u32 vintAcceptCount  = 0;
 private:
     void _setError(const char* msg);
 };
