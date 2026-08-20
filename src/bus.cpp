@@ -282,10 +282,14 @@ const u32 a = addr & 0xFFFFFFu;
         return _ioRead8(a);
 
     // BUSREQ — bit0=1 means Z80 still running (bus not granted), bit0=0
-    // means granted. Grant is immediate in this model once requested (or
-    // trivially granted if the Z80 is already held in reset).
+    // means granted. Grant reflects z80BusReq only — it is NOT tied to
+    // reset state. Reset and busreq are independent lines on real
+    // hardware; auto-granting whenever reset happened to be asserted
+    // caused status polls after a legitimate busreq release (with reset
+    // reasserted mid-sequence, a valid pattern — see Mean Bean Machine's
+    // init code) to read "granted" forever and hang.
     if (a == 0xA11100u || a == 0xA11101u)
-        return (z80BusReq || z80Reset) ? 0x00u : 0xFFu;
+        return z80BusReq ? 0x00u : 0xFFu;
 
     // RESET
     if (a == 0xA11200u || a == 0xA11201u)
@@ -444,7 +448,13 @@ void GenBus::write16(u32 addr, u16 val) {
     // write like MOVE.W #$0100,($A11200) would set z80Reset then
     // immediately clear it again in the same instruction.
     if (a >= 0xA11100u && a < 0xA11300u) {
-        write8(addr + 1u, static_cast<u8>(val));
+        // Standard convention writes the control bit at bit 8 of the word
+        // (e.g. move.w #$0100,$A11100) — previously only the low byte was
+        // forwarded, silently dropping that bit and making every textbook
+        // busreq/reset request a no-op. Accept bit 8 OR bit 0 so both the
+        // word-write idiom and a direct low-byte write behave correctly.
+        const u8 bit = static_cast<u8>(((val >> 8) & 1u) | (val & 1u));
+        write8(addr + 1u, bit);
         return;
     }
 
