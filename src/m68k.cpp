@@ -383,8 +383,17 @@ void M68K::step() {
         return;
     }
 
-    traceBuf[traceIdx] = pc;
-    traceIdx = (traceIdx + 1) % TRACE_SIZE;
+    if (pc == stuckLastPC) {
+        stuckRepeatCount++;
+        if (stuckRepeatCount > 200u) traceFrozen = true;
+    } else {
+        stuckLastPC = pc;
+        stuckRepeatCount = 0;
+    }
+    if (!traceFrozen) {
+        traceBuf[traceIdx] = pc;
+        traceIdx = (traceIdx + 1) % TRACE_SIZE;
+    }
     totalSteps++;
 
     u16 op = fetch16();

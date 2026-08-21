@@ -196,10 +196,16 @@ public:
     void exception(u32 vector);
 	
 	    // Debug: ring buffer of the last N instruction start addresses.
- static constexpr u32 TRACE_SIZE = 64;
+    static constexpr u32 TRACE_SIZE = 64;
     u32 traceBuf[TRACE_SIZE];
     u32 traceIdx;
     u64 totalSteps;
+    // Stuck-loop diagnostic: freezes traceBuf once PC repeats the same
+    // address many times in a row, so the ring buffer preserves the
+    // lead-up to the loop instead of being overwritten by the loop itself.
+    u32 stuckLastPC = 0;
+    u32 stuckRepeatCount = 0;
+    bool traceFrozen = false;
 private:
     s32 sext8 (u32 v) { return static_cast<s32>(static_cast<s8> (static_cast<u8> (v))); }
     s32 sext16(u32 v) { return static_cast<s32>(static_cast<s16>(static_cast<u16>(v))); }
